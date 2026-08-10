@@ -46,6 +46,7 @@ Reference resolution happens after review, so corrected vendor names and PO numb
 ## Layout
 
 - `src/mastra/schemas/`: canonical output, draft, document, and review schemas.
+- `src/mastra/agents/`: registered LLM invoice-extraction agent.
 - `src/mastra/readers/`: swappable fixture and vision readers.
 - `src/mastra/workflows/`: deterministic reader workflow.
 - `src/mastra/scorers/`: deterministic `createScorer` fidelity evaluation.

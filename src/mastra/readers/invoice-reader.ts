@@ -1,14 +1,11 @@
 import 'dotenv/config'
 import { readFile } from 'node:fs/promises'
 import { basename } from 'node:path'
-import { Agent } from '@mastra/core/agent'
+import { invoiceExtractionAgent } from '../agents/invoice-extraction.ts'
 import { InvoiceDraftSchema, type DocumentRef, type InvoiceDraft } from '../schemas/invoice.ts'
 import { invoiceFixtures } from '../fixtures/invoices.ts'
 
 export interface InvoiceReader { read(document: DocumentRef): Promise<InvoiceDraft> }
-
-const instructions = `Extract only values printed on the invoice. Do not invent vendor or PO IDs. Use null for unreadable values. Dates must be yyyy-mm-dd, currency must be ISO 4217, and confidence values are your estimates only.`
-export const invoiceExtractionAgent = new Agent({ id: 'invoice-extraction-agent', name: 'Invoice extraction agent', instructions, model: process.env.INVOICE_READER_MODEL ?? 'anthropic/claude-sonnet-4-6' })
 
 class FixtureInvoiceReader implements InvoiceReader {
   async read(document: DocumentRef) {

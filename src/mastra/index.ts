@@ -2,7 +2,7 @@ import 'dotenv/config'
 import { mkdirSync } from 'node:fs'
 import { Mastra } from '@mastra/core'
 import { LibSQLStore } from '@mastra/libsql'
-import { invoiceExtractionAgent } from './readers/invoice-reader.ts'
+import { invoiceExtractionAgent } from './agents/invoice-extraction.ts'
 import { extractionFidelityScorer } from './scorers/extraction-fidelity.ts'
 import { invoiceReaderWorkflow } from './workflows/invoice-reader.ts'
 
