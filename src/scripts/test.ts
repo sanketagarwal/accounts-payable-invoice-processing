@@ -44,6 +44,10 @@ assert.ok(validateExtraction({ ...cleanExtraction, subtotal: 99 }).issues.includ
 assert.ok(validateExtraction({ ...cleanExtraction, subtotal: null, tax: null, lines: [] }).issues.includes('total cannot be reconciled from printed amounts'))
 assert.equal(validateExtraction({ ...cleanExtraction, total: Number.POSITIVE_INFINITY }).extracted, null)
 assert.equal(validateExtraction({ ...cleanExtraction, currency: 'XAU' }).extracted?.currency, 'XAU')
+assert.equal(validateExtraction({ ...cleanExtraction, currency: 'XCG' }).extracted?.currency, 'XCG')
+assert.equal(validateExtraction({ ...cleanExtraction, currency: 'XAD' }).extracted?.currency, 'XAD')
+assert.ok(validateExtraction({ ...cleanExtraction, currency: 'XCG', total: 108.001 }).issues.includes('total exceeds XCG minor-unit precision'))
+assert.ok(validateExtraction({ ...cleanExtraction, currency: 'XAD', total: 108.001 }).issues.includes('total exceeds XAD minor-unit precision'))
 assert.equal(validateExtraction({ ...cleanExtraction, currency: 'usd' }).extracted, null)
 assert.ok(validateExtraction({ ...cleanExtraction, total: 108.004 }).issues.includes('total exceeds USD minor-unit precision'))
 assert.ok(validateExtraction({ ...cleanExtraction, lines: [{ ...cleanExtraction.lines[0]!, lineTotal: 100.001 }] }).issues.includes('lines.0.lineTotal exceeds USD minor-unit precision'))
@@ -108,6 +112,12 @@ if (completedReview.status === 'success') {
   assert.equal(completedReview.result.extractedResult.source, 'image')
   assert.equal(completedReview.result.reviewerId, 'reviewer')
 }
+
+const composedWorkflow = mastra.getWorkflow('apInvoiceWorkflow'), composedRun = await composedWorkflow.createRun()
+const composedStart = await composedRun.start({ inputData: invoiceFixtures[1]!.document })
+assert.equal(composedStart.status, 'suspended')
+const composedResult = await composedRun.resume({ resumeData: { extracted: invoiceFixtures[1]!.groundTruth }, requestContext })
+assert.equal(composedResult.status, 'success')
 
 const unauthorizedRun = await readerWorkflow.createRun(), unauthorizedStart = await unauthorizedRun.start({ inputData: invoiceFixtures[1]!.document })
 assert.equal(unauthorizedStart.status, 'suspended')

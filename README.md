@@ -55,15 +55,16 @@ The workflow only suspends when deterministic reader-integrity checks fail: cano
 
 ### Review and resume
 
-Resume `verify-invoice` with corrected data, and supply the reviewer identity through Mastra `RequestContext`:
+Resume the primary `apInvoiceWorkflow` with corrected data, and supply the reviewer identity through Mastra `RequestContext`. Because it has one suspended path, omit `step` so Mastra resumes the nested reader correctly:
 
 ```ts
 await run.resume({
-  step: 'verify-invoice',
   resumeData: { extracted: correctedInvoice },
   requestContext, // reviewerId is populated here by trusted auth middleware
 })
 ```
+
+For the standalone `invoiceReaderWorkflow`, `step: 'verify-invoice'` is also valid. If more suspension points are added later, pass the nested path returned in the run's `suspended` array.
 
 For local Studio testing, put `{ "reviewerId": "local-reviewer" }` in the request-context editor. In production, authentication middleware must overwrite this value from the verified principal; never trust a reviewer ID supplied in the correction payload.
 
@@ -72,6 +73,8 @@ Reference resolution happens after review, so corrected vendor names and PO numb
 ## Phase 2: deterministic controls
 
 The Phase 1/2 boundary converts every amount to currency-aware integer minor units (`USD 10.50 → 1050`, `JPY 10 → 10`, `BHD 10.500 → 10500`). Printed `vendorName` and `poNumber` are preserved. Phase 1's fixture `vendorId`/`poId` values become non-authoritative hints and are never sent to QuickBooks or another real provider.
+
+Currency validation uses the pinned `currency-codes` table plus reviewed current-code overrides from ISO 4217 amendments. Withdrawn codes remain accepted so historical invoices can still be processed; new or changed codes must be added with their official SIX amendment and a regression test when the pinned table is updated.
 
 Every step emits stable reason codes, explicit capability adaptations, and per-port source provenance. Provider outages become `unknown_retry`; genuine misses become review outcomes. Low-confidence fields only cause `verify_extraction` when a deterministic mismatch exists.
 
