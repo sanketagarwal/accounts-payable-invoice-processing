@@ -5,6 +5,7 @@ import { AssessmentStateSchema, type AssessmentState, type Phase2Invoice, type S
 
 const initial = (invoice: Phase2Invoice): AssessmentState => ({ invoice, vendor: null, purchaseOrder: null, receipts: [], decisions: [], matchMode: null, duplicateIds: [] })
 const unavailable = (error: ProviderUnavailableError, sources: Record<string, string>): StepDecision => ({ step: 'vendor', outcome: 'unknown_retry', reviewType: null, reasons: [{ code: 'VENDOR_LOOKUP_UNAVAILABLE', message: error.message }], signals: [], adaptations: [], sources })
+const identity = (value: string) => value.replace(/[^a-z0-9]/gi, '').toLowerCase()
 export function makeVendorValidation(runtime: Phase2Runtime) {
   const provider = runtime.provider, sources = runtimeSources(runtime)
   return async (invoice: Phase2Invoice) => {
@@ -20,6 +21,12 @@ export function makeVendorValidation(runtime: Phase2Runtime) {
       }
       const vendor = vendors[0]!, restriction = provider.capabilities.vendorStatusRichness === 'binary' ? await runtime.statusRestrictions?.getRestriction({ providerId: sources.vendors, vendorId: vendor.id }) : null
       state.vendor = restriction ? { ...vendor, status: restriction } : vendor
+      if (invoice.vendorTaxId && vendor.taxId && identity(invoice.vendorTaxId) !== identity(vendor.taxId)) {
+        const policy = await runtime.policy.getPolicy(), uncertain = invoice.confidence.some(item => item.field === 'vendorTaxId' && item.confidence < policy.lowConfidenceThreshold)
+        state.decisions.push({ step: 'vendor', outcome: uncertain ? 'verify_extraction' : 'review', reviewType: uncertain ? null : 'vendor_identity_mismatch', reasons: [{ code: 'VENDOR_TAX_ID_MISMATCH', message: 'Printed and canonical vendor tax IDs conflict', evidence: { printed: invoice.vendorTaxId, canonical: vendor.taxId } }], signals, adaptations, sources: { vendors: sources.vendors } })
+        return AssessmentStateSchema.parse(state)
+      }
+      if (invoice.vendorTaxId && !vendor.taxId) signals.push('vendor_tax_id_unverifiable')
       if (state.vendor.status !== 'approved') {
         state.decisions.push({ step: 'vendor', outcome: 'blocked', reviewType: null, reasons: [{ code: 'VENDOR_NOT_APPROVED', message: `Vendor status is ${state.vendor.status}`, evidence: { status: state.vendor.status } }], signals, adaptations, sources: { vendors: sources.vendors } })
         return AssessmentStateSchema.parse(state)

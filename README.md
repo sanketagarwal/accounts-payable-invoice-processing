@@ -84,7 +84,7 @@ QuickBooks has no goods-receipt port here, so matching visibly degrades to two-w
 
 ### Compose multiple systems
 
-`makeCompositeProvider` assigns each port independently. For example, QuickBooks can supply vendors, POs, and bill history while a receiving system supplies goods receipts. When their PO IDs differ, construction requires an executable `ReferenceCrosswalk`; otherwise it refuses to start. Decisions record both source IDs.
+`makeCompositeProvider` assigns each port independently. For example, QuickBooks can supply vendors, POs, and bill history while a receiving system supplies goods receipts. When embedded vendor IDs or PO IDs differ between systems, construction requires the corresponding executable `ReferenceCrosswalk`; otherwise it refuses to start. Decisions record both source IDs.
 
 ```ts
 const provider = makeCompositeProvider({

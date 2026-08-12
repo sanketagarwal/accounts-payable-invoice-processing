@@ -24,7 +24,7 @@ export class HttpQboClient implements QboClient {
   }
 }
 export class QuickBooksAdapter implements VendorRepository, PurchaseOrderRepository {
-  constructor(private readonly client: QboClient) {}
+  constructor(private readonly client: QboClient, private readonly billPageSize = 1000) { if (!Number.isInteger(billPageSize) || billPageSize < 1 || billPageSize > 1000) throw new Error('QuickBooks bill page size must be an integer from 1 to 1000') }
   async find(input: VendorLookup) {
     const rows = await this.client.query<QboVendor>('Vendor', `select * from Vendor where DisplayName = '${quote(input.name)}'`)
     return rows.map(row => VendorRecordSchema.parse({ id: required(row.Id, 'Vendor.Id'), name: required(row.DisplayName, 'Vendor.DisplayName'), taxId: row.TaxIdentifier ?? null, status: row.Active === false ? 'inactive' : 'approved', bankDetailsFingerprint: null }))
@@ -43,7 +43,11 @@ export class QuickBooksAdapter implements VendorRepository, PurchaseOrderReposit
     })
   }
   async billHistorySeed(): Promise<PriorInvoice[]> {
-    const rows = await this.client.query<QboBill>('Bill', 'select * from Bill')
+    const rows: QboBill[] = []
+    for (let start = 1; ; start += this.billPageSize) {
+      const page = await this.client.query<QboBill>('Bill', `select * from Bill startposition ${start} maxresults ${this.billPageSize}`)
+      rows.push(...page); if (page.length < this.billPageSize) break
+    }
     return rows.map(row => { const currency = row.CurrencyRef?.value ?? 'USD'; return PriorInvoiceSchema.parse({ id: required(row.Id, 'Bill.Id'), vendorId: required(row.VendorRef?.value, 'Bill.VendorRef'), invoiceNumber: required(row.DocNumber, 'Bill.DocNumber'), invoiceDate: required(row.TxnDate, 'Bill.TxnDate'), currency, totalMinor: toMinorUnits(row.TotalAmt ?? 0, currency), channel: null }) })
   }
 }

@@ -15,10 +15,14 @@ export function createPhase2Runtime(options: {
   const fallback = options.sanctionsFallback ?? (process.env.SANCTIONS_SCREENING === 'fixture' ? new FixtureSanctionsScreener() : undefined)
   validateProviderSelection(provider, { sanctionsFallback: fallback })
   const history = options.history ?? new InMemoryInvoiceHistoryRepository(), policy = options.policy ?? new FixturePolicyProvider()
-  let seeded: Promise<void> | undefined
+  let syncing: Promise<void> | undefined
   return {
     provider, history, policy, sanctions: provider.sanctions ?? fallback!, sanctionsIsFallback: !provider.sanctions, statusRestrictions: options.statusRestrictions,
-    seedHistory: () => seeded ??= provider.billHistorySeed ? provider.billHistorySeed().then(invoices => history.seed(invoices)) : Promise.resolve(),
+    seedHistory: () => {
+      if (!provider.billHistorySeed) return Promise.resolve()
+      if (!syncing) syncing = provider.billHistorySeed().then(invoices => history.seed(invoices)).finally(() => { syncing = undefined })
+      return syncing
+    },
   }
 }
 export const activePhase2Runtime = createPhase2Runtime()

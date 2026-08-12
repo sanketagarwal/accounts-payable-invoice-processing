@@ -5,14 +5,21 @@ export interface VendorRepository { find(input: VendorLookup): Promise<VendorRec
 export interface PurchaseOrderRepository { findByNumber(poNumber: string): Promise<PurchaseOrder[]> }
 export interface GoodsReceiptRepository { findByPurchaseOrderId(purchaseOrderId: string): Promise<GoodsReceipt[]> }
 export interface InvoiceHistoryRepository {
-  findPotentialDuplicates(input: { vendorId: string; invoiceNumber: string; totalMinor: number }): Promise<PriorInvoice[]>
+  findPotentialDuplicates(input: { vendorId: string; invoiceNumber: string; currency: string; totalMinor: number }): Promise<PriorInvoice[]>
   seed(invoices: PriorInvoice[]): Promise<void>
   save(invoice: PriorInvoice): Promise<void>
 }
 export interface SanctionsScreener { screen(vendor: VendorRecord): Promise<SanctionsResult> }
 export interface PolicyProvider { getPolicy(): Promise<PolicyConfig> }
 export interface VendorStatusRestrictionSource { getRestriction(input: { providerId: string; vendorId: string }): Promise<'on_hold' | 'blocked' | null> }
-export interface ReferenceCrosswalk { mapPurchaseOrderId(input: { id: string; fromNamespace: string; toNamespace: string }): Promise<string | null> }
+export interface ReferenceCrosswalk {
+  mapVendorId?(input: { id: string; fromNamespace: string; toNamespace: string }): Promise<string | null>
+  mapPurchaseOrderId?(input: { id: string; fromNamespace: string; toNamespace: string }): Promise<string | null>
+}
+
+export class ReferenceCrosswalkError extends Error {
+  constructor(readonly entity: 'vendor' | 'purchaseOrder', readonly id: string) { super(`No ${entity} crosswalk for ${id}`); this.name = 'ReferenceCrosswalkError' }
+}
 
 export class ProviderUnavailableError extends Error {
   readonly retryable = true

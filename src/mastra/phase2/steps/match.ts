@@ -1,9 +1,22 @@
 import type { Phase2Runtime } from '../composition.ts'
 import { runtimeSources } from '../composition.ts'
-import { ProviderUnavailableError } from '../ports.ts'
-import { AssessmentStateSchema, type AssessmentState, type StepDecision } from '../schemas.ts'
+import { ProviderUnavailableError, ReferenceCrosswalkError } from '../ports.ts'
+import { AssessmentStateSchema, type AssessmentState, type PurchaseOrder, type StepDecision } from '../schemas.ts'
 
 const lowConfidence = (state: AssessmentState, fields: string[], threshold: number) => state.invoice.confidence.some(item => fields.includes(item.field) && item.confidence < threshold)
+const lineMismatches = (state: AssessmentState, po: PurchaseOrder, tolerance: number) => {
+  const available = new Set(po.lines.map((_, index) => index)), mismatches: string[] = []
+  state.invoice.lines.forEach((line, invoiceIndex) => {
+    const poIndex = line.sku ? po.lines.findIndex((candidate, index) => available.has(index) && candidate.sku === line.sku) : available.has(invoiceIndex) ? invoiceIndex : -1
+    if (poIndex < 0) { mismatches.push(`lines.${invoiceIndex}.missing`); return }
+    available.delete(poIndex); const expected = po.lines[poIndex]!
+    if (line.qty !== expected.qty) mismatches.push(`lines.${invoiceIndex}.qty`)
+    if (Math.abs(line.unitPriceMinor - expected.unitPriceMinor) > tolerance) mismatches.push(`lines.${invoiceIndex}.unitPrice`)
+    if (line.lineTotalMinor !== null && Math.abs(line.lineTotalMinor - expected.lineTotalMinor) > tolerance) mismatches.push(`lines.${invoiceIndex}.lineTotal`)
+  })
+  if (available.size) mismatches.push('lines.uninvoicedPoLines')
+  return mismatches
+}
 export function makeInvoiceMatch(runtime: Phase2Runtime) {
   const provider = runtime.provider, sources = runtimeSources(runtime)
   return async (state: AssessmentState) => {
@@ -21,10 +34,10 @@ export function makeInvoiceMatch(runtime: Phase2Runtime) {
       const po = orders[0]!; state.purchaseOrder = po
       const mismatches = [
         ...(po.vendorId === state.vendor.id ? [] : ['vendor']), ...(po.currency === state.invoice.currency ? [] : ['currency']),
-        ...(Math.abs(po.totalMinor - state.invoice.totalMinor) <= policy.amountToleranceMinor ? [] : ['total']),
+        ...(Math.abs(po.totalMinor - state.invoice.totalMinor) <= policy.amountToleranceMinor ? [] : ['total']), ...lineMismatches(state, po, policy.amountToleranceMinor),
       ]
       if (mismatches.length) {
-        const verify = lowConfidence(state, ['vendorName', 'poNumber', 'currency', 'total'], policy.lowConfidenceThreshold)
+        const verify = lowConfidence(state, ['vendorName', 'poNumber', 'currency', 'total', 'lines', 'sku', 'qty', 'unitPrice', 'lineTotal'], policy.lowConfidenceThreshold)
         state.decisions.push({ step: 'match', outcome: verify ? 'verify_extraction' : 'review', reviewType: verify ? null : 'po_mismatch', reasons: [{ code: 'PO_MISMATCH', message: 'Invoice does not match the purchase order', evidence: { mismatches } }], signals: [], adaptations, sources: { purchaseOrders: sources.purchaseOrders } }); return AssessmentStateSchema.parse(state)
       }
       if (!provider.goodsReceipts) {
@@ -39,6 +52,9 @@ export function makeInvoiceMatch(runtime: Phase2Runtime) {
       state.decisions.push({ step: 'match', outcome: receiptMismatch ? (verify ? 'verify_extraction' : 'review') : 'pass', reviewType: receiptMismatch && !verify ? 'receipt_mismatch' : null, reasons: [{ code: receiptMismatch ? 'RECEIPT_MISMATCH' : 'THREE_WAY_MATCH', message: receiptMismatch ? 'Received quantities do not cover invoiced quantities' : 'Invoice, purchase order, and receipts match', evidence: { matchMode: 'three_way', receiptIds: state.receipts.map(receipt => receipt.id) } }], signals: [], adaptations, sources: { purchaseOrders: sources.purchaseOrders, goodsReceipts: sources.goodsReceipts } })
       return AssessmentStateSchema.parse(state)
     } catch (error) {
+      if (error instanceof ReferenceCrosswalkError) {
+        state.decisions.push({ step: 'match', outcome: 'review', reviewType: 'identity_crosswalk_missing', reasons: [{ code: 'IDENTITY_CROSSWALK_MISSING', message: error.message, evidence: { entity: error.entity, id: error.id } }], signals: [], adaptations, sources: { purchaseOrders: sources.purchaseOrders, goodsReceipts: sources.goodsReceipts } }); return AssessmentStateSchema.parse(state)
+      }
       if (!(error instanceof ProviderUnavailableError)) throw error
       state.decisions.push({ step: 'match', outcome: 'unknown_retry', reviewType: null, reasons: [{ code: 'MATCH_LOOKUP_UNAVAILABLE', message: error.message }], signals: [], adaptations, sources: { purchaseOrders: sources.purchaseOrders, goodsReceipts: sources.goodsReceipts } }); return AssessmentStateSchema.parse(state)
     }

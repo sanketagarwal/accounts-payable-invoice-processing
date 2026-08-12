@@ -11,7 +11,8 @@ export type ProviderPort = 'vendors' | 'purchaseOrders' | 'goodsReceipts' | 'san
 export interface AccountingProvider {
   id: string; displayName: string; capabilities: ProviderCapabilities; vendors?: VendorRepository; purchaseOrders?: PurchaseOrderRepository;
   goodsReceipts?: GoodsReceiptRepository; sanctions?: SanctionsScreener; billHistorySeed?: () => Promise<PriorInvoice[]>;
-  sources?: Partial<Record<ProviderPort, string>>; identityNamespaces?: { vendors?: string; purchaseOrders?: string; goodsReceipts?: string };
+  sources?: Partial<Record<ProviderPort, string>>;
+  identityNamespaces?: { vendors?: string; purchaseOrders?: string; purchaseOrderVendorIds?: string; goodsReceipts?: string; billHistoryVendorIds?: string };
 }
 export interface CapabilityPolicy { required: BooleanCapability[]; degradable: BooleanCapability[]; optional: BooleanCapability[] }
 export const defaultCapabilityPolicy: CapabilityPolicy = {
