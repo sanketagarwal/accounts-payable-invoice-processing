@@ -34,7 +34,7 @@ Open the URL printed by `mastra dev`, select `apInvoiceWorkflow`, and start it w
 }
 ```
 
-The workflow uses local fixtures by default, so this path needs no model or accounting-system credentials. Select `invoiceReaderWorkflow` to inspect Phase 1 alone or `apDecisionWorkflow` to send an existing Phase 1 result directly into Phase 2.
+The workflow uses local fixtures by default, so this path needs no model or accounting-system credentials. Select `invoiceReaderWorkflow` to inspect Phase 1 alone. Phase 2 is intentionally exposed only through `apInvoiceWorkflow`, so it cannot bypass the trusted reader boundary.
 
 ## Phase 1: trusted reader
 

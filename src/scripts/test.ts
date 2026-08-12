@@ -34,6 +34,7 @@ for (const fixture of invoiceFixtures) {
   assert.deepEqual(run.result.extractedResult, fixture.groundTruth)
   const score = await extractionFidelityScorer.run({ input: fixture.groundTruth, output: run.result.extractedResult })
   assert.equal(score.score, 1)
+  assert.ok(scoreExtraction(fixture.draft, fixture.groundTruth).overall >= fixture.minimumFidelity)
 }
 
 const cleanExtraction = invoiceFixtures[0]!.groundTruth

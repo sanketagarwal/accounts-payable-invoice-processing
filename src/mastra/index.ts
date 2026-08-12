@@ -7,7 +7,6 @@ import { LibSQLStore } from '@mastra/libsql'
 import { invoiceExtractionAgent } from './agents/invoice-extraction.ts'
 import { extractionFidelityScorer } from './scorers/extraction-fidelity.ts'
 import { invoiceReaderWorkflow } from './workflows/invoice-reader.ts'
-import { apDecisionWorkflow } from './phase2/workflow.ts'
 import { apInvoiceWorkflow } from './workflows/ap-invoice.ts'
 
 export const defaultStoragePath = resolve(fileURLToPath(new URL('../../', import.meta.url)), 'data/mastra.db')
@@ -19,6 +18,6 @@ if (!configuredStorageUrl) {
   chmodSync(defaultStoragePath, 0o600)
 }
 export const mastra = new Mastra({
-  agents: { invoiceExtractionAgent }, workflows: { apInvoiceWorkflow, invoiceReaderWorkflow, apDecisionWorkflow }, scorers: { extractionFidelityScorer },
+  agents: { invoiceExtractionAgent }, workflows: { apInvoiceWorkflow, invoiceReaderWorkflow }, scorers: { extractionFidelityScorer },
   storage: new LibSQLStore({ id: 'ap-invoice-storage', url: configuredStorageUrl ?? `file:${defaultStoragePath}` }),
 })

@@ -10,8 +10,8 @@ const reviewed: ExtractedInvoice = {
   subtotal: 50, tax: 10, total: 60, lines: [{ sku: null, description: 'Freight', qty: 1, unitPrice: 50, lineTotal: 50 }],
   confidence: [{ field: 'vendorName', confidence: 0.08 }], overallConfidence: 0.08, source: 'image',
 }
-export type InvoiceFixture = { document: DocumentRef; draft: InvoiceDraft; groundTruth: ExtractedInvoice; requiresReview: boolean }
+export type InvoiceFixture = { document: DocumentRef; draft: InvoiceDraft; groundTruth: ExtractedInvoice; requiresReview: boolean; minimumFidelity: number }
 export const invoiceFixtures: InvoiceFixture[] = [
-  { document: { id: 'clean-invoice', mimeType: 'application/pdf', source: 'PDF', sha256: 'fixture-clean' }, draft: clean, groundTruth: clean, requiresReview: false },
-  { document: { id: 'hard-invoice', mimeType: 'image/png', source: 'image', sha256: 'fixture-hard' }, draft: { ...reviewed, vendorName: null }, groundTruth: reviewed, requiresReview: true },
+  { document: { id: 'clean-invoice', mimeType: 'application/pdf', source: 'PDF', sha256: 'fixture-clean' }, draft: clean, groundTruth: clean, requiresReview: false, minimumFidelity: 1 },
+  { document: { id: 'hard-invoice', mimeType: 'image/png', source: 'image', sha256: 'fixture-hard' }, draft: { ...reviewed, vendorName: null }, groundTruth: reviewed, requiresReview: true, minimumFidelity: 0.9375 },
 ]
