@@ -1,5 +1,3 @@
-import { createHash } from 'node:crypto'
-import { readFile } from 'node:fs/promises'
 import { basename, extname, resolve } from 'node:path'
 import { mastra } from '../mastra/index.ts'
 import { invoiceFixtures, type InvoiceFixture } from '../mastra/fixtures/invoices.ts'
@@ -16,7 +14,7 @@ export async function runFixture(fixture: InvoiceFixture) {
   return { runId: run.runId, suspended, result: result.result as { extractedResult: ExtractedInvoice } }
 }
 export async function localDocument(path: string): Promise<DocumentRef> {
-  const absolutePath = resolve(path), bytes = await readFile(absolutePath), extension = extname(absolutePath).toLowerCase()
+  const absolutePath = resolve(path), extension = extname(absolutePath).toLowerCase()
   const mimeType = extension === '.pdf' ? 'application/pdf' : extension === '.png' ? 'image/png' : extension === '.jpg' || extension === '.jpeg' ? 'image/jpeg' : 'application/octet-stream'
-  return { id: basename(absolutePath), localPath: absolutePath, mimeType, source: mimeType === 'application/pdf' ? 'PDF' : 'image', sha256: createHash('sha256').update(bytes).digest('hex') }
+  return { id: basename(absolutePath), localPath: absolutePath, mimeType, source: mimeType === 'application/pdf' ? 'PDF' : 'image' }
 }

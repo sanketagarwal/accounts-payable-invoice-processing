@@ -1,6 +1,6 @@
 import { createStep, createWorkflow } from '@mastra/core/workflows'
 import { z } from 'zod'
-import { invoiceReader } from '../readers/invoice-reader.ts'
+import { invoiceReader, prepareDocument } from '../readers/invoice-reader.ts'
 import { DocumentRefSchema, ExtractedInvoiceSchema, ExtractionChecksSchema, HumanVerificationSchema, InvoiceDraftSchema } from '../schemas/invoice.ts'
 import { resolveReferences } from '../tools/resolve-references.ts'
 import { validateExtraction } from '../validation/extraction-checks.ts'
@@ -12,11 +12,11 @@ const outputSchema = resolvedSchema.extend({ snapshot: z.object({ rawDocumentRef
 
 const loadDocument = createStep({
   id: 'load-document', inputSchema: DocumentRefSchema, outputSchema: DocumentRefSchema,
-  execute: async ({ inputData }) => inputData,
+  execute: async ({ inputData }) => prepareDocument(inputData),
 })
 const extractInvoice = createStep({
   id: 'extract-invoice', inputSchema: DocumentRefSchema, outputSchema: extractedSchema,
-  execute: async ({ inputData }) => ({ rawDocumentRef: inputData, draft: await invoiceReader.read(inputData) }),
+  execute: async ({ inputData }) => ({ rawDocumentRef: inputData, draft: { ...await invoiceReader.read(inputData), source: inputData.source } }),
 })
 const verifyInvoice = createStep({
   id: 'verify-invoice', inputSchema: extractedSchema, outputSchema: verifiedSchema,
@@ -24,7 +24,7 @@ const verifyInvoice = createStep({
   execute: async ({ inputData, resumeData, suspend }) => {
     const candidate = resumeData?.extracted ?? inputData.draft
     const { extracted, issues } = validateExtraction(candidate)
-    if (!extracted) return await suspend({ issues, draft: inputData.draft })
+    if (!extracted) return await suspend({ issues, draft: candidate })
     return { rawDocumentRef: inputData.rawDocumentRef, extractedResult: extracted, checks: { passed: true, issues: [] }, reviewerId: resumeData?.reviewerId ?? null }
   },
 })

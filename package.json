@@ -6,14 +6,15 @@
   "scripts": {
     "dev": "mastra dev",
     "typecheck": "tsc --noEmit",
-    "test": "tsx src/scripts/test.ts",
-    "fixtures:run": "tsx src/scripts/run-fixtures.ts",
-    "fixtures:score": "tsx src/scripts/score-fixtures.ts",
+    "test": "INVOICE_READER=fixture tsx src/scripts/test.ts",
+    "fixtures:run": "INVOICE_READER=fixture tsx src/scripts/run-fixtures.ts",
+    "fixtures:score": "INVOICE_READER=fixture tsx src/scripts/score-fixtures.ts",
     "invoice:run": "tsx src/scripts/run-invoice.ts"
   },
   "dependencies": {
     "@mastra/core": "1.57.0",
     "@mastra/libsql": "1.19.0",
+    "decimal.js": "10.6.0",
     "dotenv": "16.6.1",
     "mastra": "1.23.0",
     "zod": "3.25.76"

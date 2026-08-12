@@ -24,16 +24,17 @@ Set a provider key and switch readers:
 
 ```bash
 INVOICE_READER=vision
-INVOICE_READER_MODEL=anthropic/claude-sonnet-4-6
-ANTHROPIC_API_KEY=...
+INVOICE_READER_MODEL=openai/gpt-5.6-sol
+OPENAI_API_KEY=...
+INVOICE_ROOT=/absolute/path/to/invoices
 npm run invoice:run -- path/to/invoice.pdf
 ```
 
-The vision reader sends the local image/PDF as a multimodal file part and requests Mastra structured output. Use a provider/model that supports the document MIME type. The reader never returns ERP IDs.
+The vision reader accepts PDF, PNG, and JPEG files inside `INVOICE_ROOT`, enforces `INVOICE_MAX_BYTES`, verifies the document checksum, then sends those exact bytes as a multimodal file part. Use a provider/model that supports the document MIME type. The reader never returns ERP IDs, and document source metadata comes from the trusted input rather than the model.
 
 ## Review and resume
 
-The workflow only suspends when deterministic reader-integrity checks fail: canonical date, ISO-4217 currency, required values, or printed-amount arithmetic. Model confidence remains in the result for monitoring but never controls the gate.
+The workflow only suspends when deterministic reader-integrity checks fail: canonical date, ISO-4217 currency, required values, currency-aware printed-amount arithmetic, or subtotal/line reconciliation. Model confidence remains in the result for monitoring but never controls the gate.
 
 Resume `verify-invoice` with:
 
