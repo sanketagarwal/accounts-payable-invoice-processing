@@ -5,6 +5,8 @@ import { ExtractedInvoiceSchema, type ExtractedInvoice, type InvoiceDraft } from
 const isDate = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`)) && new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value
 const blank = (value: string) => value.trim().length === 0
 const noMinorUnit = new Set(['XAG', 'XAU', 'XBA', 'XBB', 'XBC', 'XBD', 'XDR', 'XPD', 'XPT', 'XSU', 'XTS', 'XUA', 'XXX'])
+// ISO 4217 amendments 176 and 179 postdate currency-codes@2.2.0's bundled table.
+const currentCurrencyOverrides = new Map([['XAD', 2], ['XCG', 2]])
 const hasMinorUnitPrecision = (value: number, digits: number) => new Decimal(value).decimalPlaces() <= digits
 // Unit prices may be sub-minor-unit rates; posted extended amounts must obey the currency scale.
 const reconciles = (parts: Array<number | Decimal>, total: number, digits: number | null) => {
@@ -15,8 +17,9 @@ const reconciles = (parts: Array<number | Decimal>, total: number, digits: numbe
 export function validateExtraction(draft: InvoiceDraft): { extracted: ExtractedInvoice | null; issues: string[] } {
   const parsed = ExtractedInvoiceSchema.safeParse(draft)
   if (!parsed.success) return { extracted: null, issues: parsed.error.issues.map(issue => `${issue.path.join('.') || 'invoice'}: ${issue.message}`) }
-  const invoice = parsed.data, currency = currencyCode(invoice.currency), validCurrency = currency?.code === invoice.currency
-  const currencyDigits = validCurrency && !noMinorUnit.has(invoice.currency) ? currency.digits : null
+  const invoice = parsed.data, currency = currencyCode(invoice.currency), overrideDigits = currentCurrencyOverrides.get(invoice.currency)
+  const validCurrency = overrideDigits !== undefined || currency?.code === invoice.currency
+  const currencyDigits = overrideDigits ?? (validCurrency && !noMinorUnit.has(invoice.currency) ? currency!.digits : null)
   const lineAmounts: Array<number | Decimal> = invoice.lines.map(line => line.lineTotal ?? new Decimal(line.qty).mul(line.unitPrice))
   const subtotalBasis = invoice.subtotal ?? (lineAmounts.length ? lineAmounts.reduce<Decimal>((sum, value) => sum.plus(value), new Decimal(0)) : null)
   const issues = [
