@@ -21,20 +21,26 @@ export function makeVendorValidation(runtime: Phase2Runtime) {
       }
       const vendor = vendors[0]!, restriction = provider.capabilities.vendorStatusRichness === 'binary' ? await runtime.statusRestrictions?.getRestriction({ providerId: sources.vendors, vendorId: vendor.id }) : null
       state.vendor = restriction ? { ...vendor, status: restriction } : vendor
-      if (invoice.vendorTaxId && vendor.taxId && identity(invoice.vendorTaxId) !== identity(vendor.taxId)) {
-        const policy = await runtime.policy.getPolicy(), uncertain = invoice.confidence.some(item => item.field === 'vendorTaxId' && item.confidence < policy.lowConfidenceThreshold)
-        state.decisions.push({ step: 'vendor', outcome: uncertain ? 'verify_extraction' : 'review', reviewType: uncertain ? null : 'vendor_identity_mismatch', reasons: [{ code: 'VENDOR_TAX_ID_MISMATCH', message: 'Printed and canonical vendor tax IDs conflict', evidence: { printed: invoice.vendorTaxId, canonical: vendor.taxId } }], signals, adaptations, sources: { vendors: sources.vendors } })
-        return AssessmentStateSchema.parse(state)
-      }
+      const taxIdMismatch = invoice.vendorTaxId && vendor.taxId && identity(invoice.vendorTaxId) !== identity(vendor.taxId)
+      const mismatchReason = taxIdMismatch ? { code: 'VENDOR_TAX_ID_MISMATCH', message: 'Printed and canonical vendor tax IDs conflict', evidence: { printed: invoice.vendorTaxId, canonical: vendor.taxId } } : null
       if (invoice.vendorTaxId && !vendor.taxId) signals.push('vendor_tax_id_unverifiable')
       if (state.vendor.status !== 'approved') {
-        state.decisions.push({ step: 'vendor', outcome: 'blocked', reviewType: null, reasons: [{ code: 'VENDOR_NOT_APPROVED', message: `Vendor status is ${state.vendor.status}`, evidence: { status: state.vendor.status } }], signals, adaptations, sources: { vendors: sources.vendors } })
+        state.decisions.push({ step: 'vendor', outcome: 'blocked', reviewType: null, reasons: [{ code: 'VENDOR_NOT_APPROVED', message: `Vendor status is ${state.vendor.status}`, evidence: { status: state.vendor.status } }, ...(mismatchReason ? [mismatchReason] : [])], signals, adaptations, sources: { vendors: sources.vendors } })
         return AssessmentStateSchema.parse(state)
       }
       const sanctions = await runtime.sanctions.screen(state.vendor)
+      if (sanctions.matched) {
+        state.decisions.push({ step: 'vendor', outcome: 'blocked', reviewType: null, reasons: [{ code: 'SANCTIONS_MATCH', message: 'Vendor matched a sanctions list', evidence: sanctions }, ...(mismatchReason ? [mismatchReason] : [])], signals, adaptations, sources: { vendors: sources.vendors, sanctions: sources.sanctions } })
+        return AssessmentStateSchema.parse(state)
+      }
+      if (mismatchReason) {
+        const policy = await runtime.policy.getPolicy(), uncertain = invoice.confidence.some(item => item.field === 'vendorTaxId' && item.confidence < policy.lowConfidenceThreshold)
+        state.decisions.push({ step: 'vendor', outcome: uncertain ? 'verify_extraction' : 'review', reviewType: uncertain ? null : 'vendor_identity_mismatch', reasons: [mismatchReason], signals, adaptations, sources: { vendors: sources.vendors, sanctions: sources.sanctions } })
+        return AssessmentStateSchema.parse(state)
+      }
       state.decisions.push({
-        step: 'vendor', outcome: sanctions.matched ? 'blocked' : 'pass', reviewType: null,
-        reasons: [{ code: sanctions.matched ? 'SANCTIONS_MATCH' : 'VENDOR_VALID', message: sanctions.matched ? 'Vendor matched a sanctions list' : 'Vendor identity and status are valid', evidence: sanctions.matched ? sanctions : { vendorId: state.vendor.id } }],
+        step: 'vendor', outcome: 'pass', reviewType: null,
+        reasons: [{ code: 'VENDOR_VALID', message: 'Vendor identity and status are valid', evidence: { vendorId: state.vendor.id } }],
         signals, adaptations, sources: { vendors: sources.vendors, sanctions: sources.sanctions },
       })
       return AssessmentStateSchema.parse(state)

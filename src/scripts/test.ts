@@ -102,6 +102,18 @@ identityMismatchState = await makeDuplicateDetection(fixtureRuntime)(identityMis
 assert.equal((await makePolicyRouting(fixtureRuntime)(identityMismatchState)).disposition, 'review')
 assert.equal(identityMismatchState.decisions[0]!.reasons[0]!.code, 'VENDOR_TAX_ID_MISMATCH')
 
+for (const vendor of [
+  { id: 'blocked_vendor', name: 'Acme Supplies', taxId: 'US-12-3456789', status: 'blocked' as const, bankDetailsFingerprint: null },
+  { id: 'sanctioned_vendor', name: 'Sanctioned Supplies', taxId: 'US-12-3456789', status: 'approved' as const, bankDetailsFingerprint: null },
+]) {
+  const priorityProvider = assertProvider({ ...fixtureProvider, id: vendor.id, vendors: { find: async () => [vendor] } })
+  const priorityRuntime = createPhase2Runtime({ provider: priorityProvider, history: new InMemoryInvoiceHistoryRepository(), policy: new FixturePolicyProvider() })
+  const priorityState = await makeVendorValidation(priorityRuntime)({ ...normalized, vendorTaxId: 'US-99-9999999' })
+  assert.equal(priorityState.decisions[0]!.outcome, 'blocked')
+  assert.ok(priorityState.decisions[0]!.reasons.some(reason => reason.code === 'VENDOR_TAX_ID_MISMATCH'))
+  assert.equal((await makePolicyRouting(priorityRuntime)(priorityState)).disposition, 'blocked')
+}
+
 let duplicateState = await makeVendorValidation(fixtureRuntime)({ ...normalized, invoiceNumber: 'ACME-0999' })
 duplicateState = await makeInvoiceMatch(fixtureRuntime)(duplicateState)
 duplicateState = await makeDuplicateDetection(fixtureRuntime)(duplicateState)
