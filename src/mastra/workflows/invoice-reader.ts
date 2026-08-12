@@ -1,7 +1,7 @@
 import { createStep, createWorkflow } from '@mastra/core/workflows'
 import { z } from 'zod'
-import { invoiceReader } from '../readers/invoice-reader.ts'
-import { DocumentRefSchema, ExtractedInvoiceSchema, ExtractionChecksSchema, HumanVerificationSchema, InvoiceDraftSchema } from '../schemas/invoice.ts'
+import { invoiceReader, prepareDocument } from '../readers/invoice-reader.ts'
+import { DocumentRefSchema, ExtractedInvoiceSchema, ExtractionChecksSchema, HumanVerificationSchema, InvoiceDraftSchema, ReviewerContextSchema } from '../schemas/invoice.ts'
 import { resolveReferences } from '../tools/resolve-references.ts'
 import { validateExtraction } from '../validation/extraction-checks.ts'
 
@@ -12,20 +12,22 @@ const outputSchema = resolvedSchema.extend({ snapshot: z.object({ rawDocumentRef
 
 const loadDocument = createStep({
   id: 'load-document', inputSchema: DocumentRefSchema, outputSchema: DocumentRefSchema,
-  execute: async ({ inputData }) => inputData,
+  execute: async ({ inputData }) => prepareDocument(inputData),
 })
 const extractInvoice = createStep({
   id: 'extract-invoice', inputSchema: DocumentRefSchema, outputSchema: extractedSchema,
-  execute: async ({ inputData }) => ({ rawDocumentRef: inputData, draft: await invoiceReader.read(inputData) }),
+  execute: async ({ inputData }) => ({ rawDocumentRef: inputData, draft: { ...await invoiceReader.read(inputData), source: inputData.source } }),
 })
 const verifyInvoice = createStep({
   id: 'verify-invoice', inputSchema: extractedSchema, outputSchema: verifiedSchema,
-  suspendSchema: z.object({ issues: z.array(z.string()), draft: InvoiceDraftSchema }), resumeSchema: HumanVerificationSchema,
-  execute: async ({ inputData, resumeData, suspend }) => {
-    const candidate = resumeData?.extracted ?? inputData.draft
+  suspendSchema: z.object({ issues: z.array(z.string()), draft: InvoiceDraftSchema }), resumeSchema: HumanVerificationSchema, requestContextSchema: ReviewerContextSchema,
+  execute: async ({ inputData, resumeData, requestContext, suspend }) => {
+    const reviewerId = resumeData ? requestContext.get('reviewerId') ?? null : null
+    if (resumeData && !reviewerId) throw new Error('reviewerId must come from authenticated request context when resuming verification')
+    const candidate = { ...(resumeData?.extracted ?? inputData.draft), source: inputData.rawDocumentRef.source }
     const { extracted, issues } = validateExtraction(candidate)
-    if (!extracted) return await suspend({ issues, draft: inputData.draft })
-    return { rawDocumentRef: inputData.rawDocumentRef, extractedResult: extracted, checks: { passed: true, issues: [] }, reviewerId: resumeData?.reviewerId ?? null }
+    if (!extracted) return await suspend({ issues, draft: candidate })
+    return { rawDocumentRef: inputData.rawDocumentRef, extractedResult: extracted, checks: { passed: true, issues: [] }, reviewerId }
   },
 })
 const resolveInvoiceReferences = createStep({
@@ -39,5 +41,6 @@ const snapshotTrustedExtraction = createStep({
 
 export const invoiceReaderWorkflow = createWorkflow({
   id: 'invoice-reader-workflow', inputSchema: DocumentRefSchema, outputSchema,
+  requestContextSchema: ReviewerContextSchema,
   options: { shouldPersistSnapshot: () => true },
 }).then(loadDocument).then(extractInvoice).then(verifyInvoice).then(resolveInvoiceReferences).then(snapshotTrustedExtraction).commit()

@@ -19,6 +19,10 @@ npm run phase2:run
 npm run dev
 ```
 
+`INVOICE_READER` is required explicitly. The supplied `.env.example` selects `fixture`, which runs two canned local cases: one straight-through result and one suspended run that resumes with a fixture review. It needs no model API key. `fixtures:score` scores the raw canned extraction before any human correction, then reports field-level fidelity, a mean, and failing case IDs.
+
+The workflow snapshot is persisted through Mastra's configured LibSQL storage at `MASTRA_DB_URL`. Without that variable, the template uses `<project>/data/mastra.db` regardless of the launch directory and creates the directory/database with owner-only permissions. The final workflow output includes `snapshot.rawDocumentRef` and `snapshot.extractedResult`; full workflow state is retained by Mastra for both completed and suspended runs.
+
 Open the URL printed by `mastra dev`, select `apInvoiceWorkflow`, and start it with:
 
 ```json
@@ -30,7 +34,7 @@ Open the URL printed by `mastra dev`, select `apInvoiceWorkflow`, and start it w
 }
 ```
 
-The workflow uses local fixtures by default, so this path needs no model or accounting-system credentials. Select `invoiceReaderWorkflow` to inspect Phase 1 alone or `apDecisionWorkflow` to send an existing Phase 1 result directly into Phase 2.
+The workflow uses local fixtures by default, so this path needs no model or accounting-system credentials. Select `invoiceReaderWorkflow` to inspect Phase 1 alone. Phase 2 is intentionally exposed only through `apInvoiceWorkflow`, so it cannot bypass the trusted reader boundary.
 
 ## Phase 1: trusted reader
 
@@ -40,10 +44,30 @@ The workflow uses local fixtures by default, so this path needs no model or acco
 INVOICE_READER=vision
 INVOICE_READER_MODEL=openai/gpt-5.6-sol
 OPENAI_API_KEY=...
+INVOICE_ROOT=/absolute/path/to/invoices
 npm run invoice:run -- path/to/invoice.pdf
 ```
 
+The vision reader accepts PDF, PNG, and JPEG files inside `INVOICE_ROOT`, checks file size before reading, verifies magic bytes and checksum, then sends those exact bytes as a multimodal file part. Use a provider/model that supports the document MIME type. The reader never returns ERP IDs, and document source metadata comes from the trusted input rather than the model.
+
 Phase 1 checks dates, currencies, required fields, and printed-amount arithmetic. Model confidence is retained for monitoring and extraction-error routing, but never decides whether financial data is valid.
+The workflow only suspends when deterministic reader-integrity checks fail: canonical date, ISO-4217 currency, required values, currency-aware printed-amount arithmetic, or subtotal/line reconciliation. Extended line totals and invoice totals must use the currency's minor-unit precision; unit prices may retain legitimate sub-minor precision and are checked through rounded line reconciliation. Model confidence remains in the result for monitoring but never controls the gate.
+
+### Review and resume
+
+Resume `verify-invoice` with corrected data, and supply the reviewer identity through Mastra `RequestContext`:
+
+```ts
+await run.resume({
+  step: 'verify-invoice',
+  resumeData: { extracted: correctedInvoice },
+  requestContext, // reviewerId is populated here by trusted auth middleware
+})
+```
+
+For local Studio testing, put `{ "reviewerId": "local-reviewer" }` in the request-context editor. In production, authentication middleware must overwrite this value from the verified principal; never trust a reviewer ID supplied in the correction payload.
+
+Reference resolution happens after review, so corrected vendor names and PO numbers map to fresh `vendorId` and `poId` values. The resolver is deliberately mocked and does not make a vendor-validity decision.
 
 ## Phase 2: deterministic controls
 
@@ -125,7 +149,7 @@ Pipeline steps never consume raw accounting-system objects or read environment v
 
 ## Results and storage
 
-Mastra persists workflow state and snapshots through `LibSQLStore` at `MASTRA_DB_URL`, defaulting to `file:./data/mastra.db`. Final output contains the normalized invoice, resolved canonical records, decisions, adaptations, sources, policy, and disposition. The fixture invoice-history repository is intentionally in-memory; a production deployment should bind the pipeline-owned history port to its durable database.
+Mastra persists workflow state and snapshots through `LibSQLStore` at `MASTRA_DB_URL`. Without that variable it uses the owner-only `<project>/data/mastra.db`. Final output contains the normalized invoice, resolved canonical records, decisions, adaptations, sources, policy, and disposition. The fixture invoice-history repository is intentionally in-memory; a production deployment should bind the pipeline-owned history port to its durable database.
 
 Useful commands:
 
