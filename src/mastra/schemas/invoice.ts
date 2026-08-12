@@ -1,12 +1,12 @@
 import { z } from 'zod'
 
 export const LineItemSchema = z.object({
-  sku: z.string().nullable(), description: z.string(), qty: z.number(), unitPrice: z.number(), lineTotal: z.number().nullable(),
+  sku: z.string().nullable(), description: z.string(), qty: z.number().finite(), unitPrice: z.number().finite(), lineTotal: z.number().finite().nullable(),
 })
 export const FieldConfidenceSchema = z.object({ field: z.string(), confidence: z.number().min(0).max(1) })
 export const ExtractedInvoiceSchema = z.object({
   invoiceNumber: z.string(), vendorName: z.string(), vendorTaxId: z.string().nullable(), poNumber: z.string().nullable(),
-  invoiceDate: z.string(), currency: z.string(), subtotal: z.number().nullable(), tax: z.number().nullable(), total: z.number(),
+  invoiceDate: z.string(), currency: z.string(), subtotal: z.number().finite().nullable(), tax: z.number().finite().nullable(), total: z.number().finite(),
   lines: z.array(LineItemSchema), confidence: z.array(FieldConfidenceSchema), overallConfidence: z.number().min(0).max(1),
   source: z.enum(['PDF', 'image', 'EDI']).default('PDF'),
 })
@@ -32,4 +32,6 @@ export const DocumentRefSchema = z.object({
 export type DocumentRef = z.infer<typeof DocumentRefSchema>
 
 export const ExtractionChecksSchema = z.object({ passed: z.boolean(), issues: z.array(z.string()) })
-export const HumanVerificationSchema = z.object({ reviewerId: z.string().min(1), extracted: ExtractedInvoiceSchema })
+export const HumanVerificationSchema = z.object({ extracted: ExtractedInvoiceSchema })
+export const ReviewerContextSchema = z.object({ reviewerId: z.string().trim().min(1).optional() })
+export type ReviewerContext = z.infer<typeof ReviewerContextSchema>

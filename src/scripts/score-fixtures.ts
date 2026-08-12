@@ -1,10 +1,9 @@
 import { extractionFidelityScorer } from '../mastra/scorers/extraction-fidelity.ts'
-import { invoiceFixtures, runFixture } from './support.ts'
+import { invoiceFixtures } from './support.ts'
 
 const scores: number[] = [], failures: string[] = []
 for (const fixture of invoiceFixtures) {
-  const { result } = await runFixture(fixture)
-  const score = await extractionFidelityScorer.run({ input: fixture.groundTruth, output: result.extractedResult })
+  const score = await extractionFidelityScorer.run({ input: fixture.groundTruth, output: fixture.draft })
   scores.push(score.score)
   if (score.score < 1) failures.push(fixture.document.id)
   console.log(`${fixture.document.id}: ${score.score.toFixed(3)} ${score.reason}`)
