@@ -6,10 +6,12 @@
   "scripts": {
     "dev": "mastra dev",
     "typecheck": "tsc --noEmit",
-    "test": "INVOICE_READER=fixture tsx src/scripts/test.ts",
+    "test": "INVOICE_READER=fixture ACCOUNTING_PROVIDER=fixture tsx src/scripts/test.ts",
     "fixtures:run": "INVOICE_READER=fixture tsx src/scripts/run-fixtures.ts",
     "fixtures:score": "INVOICE_READER=fixture tsx src/scripts/score-fixtures.ts",
-    "invoice:run": "tsx src/scripts/run-invoice.ts"
+    "invoice:run": "tsx src/scripts/run-invoice.ts",
+    "phase2:run": "INVOICE_READER=fixture ACCOUNTING_PROVIDER=fixture tsx src/scripts/run-phase2.ts",
+    "providers:conformance": "tsx src/scripts/provider-conformance.ts"
   },
   "dependencies": {
     "@mastra/core": "1.57.0",
