@@ -34,7 +34,7 @@ The vision reader accepts PDF, PNG, and JPEG files inside `INVOICE_ROOT`, checks
 
 ## Review and resume
 
-The workflow only suspends when deterministic reader-integrity checks fail: canonical date, ISO-4217 currency, required values, currency-aware printed-amount arithmetic, or subtotal/line reconciliation. Model confidence remains in the result for monitoring but never controls the gate.
+The workflow only suspends when deterministic reader-integrity checks fail: canonical date, ISO-4217 currency, required values, currency-aware printed-amount arithmetic, or subtotal/line reconciliation. Extended line totals and invoice totals must use the currency's minor-unit precision; unit prices may retain legitimate sub-minor precision and are checked through rounded line reconciliation. Model confidence remains in the result for monitoring but never controls the gate.
 
 Resume `verify-invoice` with corrected data, and supply the reviewer identity through Mastra `RequestContext`:
 

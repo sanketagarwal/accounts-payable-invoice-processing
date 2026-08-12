@@ -6,6 +6,7 @@ const isDate = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.i
 const blank = (value: string) => value.trim().length === 0
 const noMinorUnit = new Set(['XAG', 'XAU', 'XBA', 'XBB', 'XBC', 'XBD', 'XDR', 'XPD', 'XPT', 'XSU', 'XTS', 'XUA', 'XXX'])
 const hasMinorUnitPrecision = (value: number, digits: number) => new Decimal(value).decimalPlaces() <= digits
+// Unit prices may be sub-minor-unit rates; posted extended amounts must obey the currency scale.
 const reconciles = (parts: Array<number | Decimal>, total: number, digits: number | null) => {
   const sum = parts.reduce<Decimal>((value, part) => value.plus(part), new Decimal(0)), expected = new Decimal(total)
   return digits === null ? sum.equals(expected) : sum.toDecimalPlaces(digits, Decimal.ROUND_HALF_UP).equals(expected.toDecimalPlaces(digits, Decimal.ROUND_HALF_UP))
