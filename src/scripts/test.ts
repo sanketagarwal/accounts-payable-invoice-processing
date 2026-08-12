@@ -25,6 +25,9 @@ assert.ok(validateExtraction({ ...clean, subtotal: 99 }).issues.includes('line t
 assert.ok(validateExtraction({ ...clean, subtotal: null, tax: null, lines: [] }).issues.includes('total cannot be reconciled from printed amounts'))
 assert.equal(validateExtraction({ ...clean, total: Number.POSITIVE_INFINITY }).extracted, null)
 assert.equal(validateExtraction({ ...clean, currency: 'XAU' }).extracted?.currency, 'XAU')
+assert.equal(validateExtraction({ ...clean, currency: 'usd' }).extracted, null)
+assert.ok(validateExtraction({ ...clean, total: 108.004 }).issues.includes('total exceeds USD minor-unit precision'))
+assert.ok(validateExtraction({ ...clean, lines: [{ ...clean.lines[0]!, lineTotal: 100.001 }] }).issues.includes('lines.0.lineTotal exceeds USD minor-unit precision'))
 assert.ok(validateExtraction({ ...clean, total: 108.01 }).issues.includes('subtotal + tax does not equal total'))
 const bhd: ExtractedInvoice = { ...clean, currency: 'BHD', subtotal: 10, tax: 0.001, total: 10.003, lines: [{ ...clean.lines[0]!, qty: 1, unitPrice: 10, lineTotal: 10 }] }
 assert.ok(validateExtraction(bhd).issues.includes('subtotal + tax does not equal total'))

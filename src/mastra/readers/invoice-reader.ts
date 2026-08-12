@@ -1,6 +1,6 @@
 import 'dotenv/config'
 import { createHash } from 'node:crypto'
-import { readFile, realpath, stat } from 'node:fs/promises'
+import { open, realpath } from 'node:fs/promises'
 import { basename, isAbsolute, relative, resolve, sep } from 'node:path'
 import { invoiceExtractionAgent } from '../agents/invoice-extraction.ts'
 import { InvoiceDraftSchema, type DocumentRef, type InvoiceDraft } from '../schemas/invoice.ts'
@@ -20,9 +20,22 @@ async function readLocalDocument(document: DocumentRef) {
   if (pathFromRoot === '..' || pathFromRoot.startsWith(`..${sep}`) || isAbsolute(pathFromRoot)) throw new Error(`Invoice file must be inside INVOICE_ROOT: ${root}`)
   const limit = Number(process.env.INVOICE_MAX_BYTES ?? 20_000_000)
   if (!Number.isSafeInteger(limit) || limit < 1) throw new Error('INVOICE_MAX_BYTES must be a positive integer')
-  if ((await stat(localPath)).size > limit) throw new Error(`Invoice exceeds INVOICE_MAX_BYTES (${limit})`)
-  const data = await readFile(localPath)
-  if (data.byteLength > limit) throw new Error(`Invoice exceeds INVOICE_MAX_BYTES (${limit})`)
+  const file = await open(localPath, 'r')
+  let data: Buffer
+  try {
+    if ((await file.stat()).size > limit) throw new Error(`Invoice exceeds INVOICE_MAX_BYTES (${limit})`)
+    const bounded = Buffer.allocUnsafe(limit + 1)
+    let bytesRead = 0
+    while (bytesRead < bounded.length) {
+      const read = await file.read(bounded, bytesRead, bounded.length - bytesRead, bytesRead)
+      if (!read.bytesRead) break
+      bytesRead += read.bytesRead
+    }
+    if (bytesRead > limit) throw new Error(`Invoice exceeds INVOICE_MAX_BYTES (${limit})`)
+    data = bounded.subarray(0, bytesRead)
+  } finally {
+    await file.close()
+  }
   const detectedMediaType = detectMediaType(data)
   if (!detectedMediaType || detectedMediaType !== document.mimeType) throw new Error(`Invoice bytes do not match declared media type ${document.mimeType}`)
   const sha256 = createHash('sha256').update(data).digest('hex')
