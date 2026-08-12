@@ -46,6 +46,8 @@ assert.equal(validateExtraction({ ...cleanExtraction, total: Number.POSITIVE_INF
 assert.equal(validateExtraction({ ...cleanExtraction, currency: 'XAU' }).extracted?.currency, 'XAU')
 assert.equal(validateExtraction({ ...cleanExtraction, currency: 'XCG' }).extracted?.currency, 'XCG')
 assert.equal(validateExtraction({ ...cleanExtraction, currency: 'XAD' }).extracted?.currency, 'XAD')
+assert.ok(validateExtraction({ ...cleanExtraction, currency: 'XCG', total: 108.001 }).issues.includes('total exceeds XCG minor-unit precision'))
+assert.ok(validateExtraction({ ...cleanExtraction, currency: 'XAD', total: 108.001 }).issues.includes('total exceeds XAD minor-unit precision'))
 assert.equal(validateExtraction({ ...cleanExtraction, currency: 'usd' }).extracted, null)
 assert.ok(validateExtraction({ ...cleanExtraction, total: 108.004 }).issues.includes('total exceeds USD minor-unit precision'))
 assert.ok(validateExtraction({ ...cleanExtraction, lines: [{ ...cleanExtraction.lines[0]!, lineTotal: 100.001 }] }).issues.includes('lines.0.lineTotal exceeds USD minor-unit precision'))
