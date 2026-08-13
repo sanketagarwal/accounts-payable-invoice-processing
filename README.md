@@ -90,6 +90,7 @@ ACCOUNTING_PROVIDER=fixture
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `fixture` | yes | yes | yes | yes | yes | full | yes |
 | `quickbooks` | yes | yes | no | yes | no | binary | no |
+| `quickbooks-mcp` | yes | yes* | no | yes | no | binary | no |
 | `connector` | stub | stub | stub | stub | stub | stub | stub |
 
 Invalid providers and missing required capabilities fail during startup. A disabled capability means its port is absent—it never silently returns an empty result.
@@ -108,6 +109,32 @@ npm run dev
 `SANCTIONS_SCREENING=fixture` is an explicit demo-only fallback. Replace it with a real standalone `SanctionsScreener` in production. Without a provider sanctions port or an explicitly configured fallback, startup fails.
 
 QuickBooks has no goods-receipt port here, so matching visibly degrades to two-way and emits `GOODS_RECEIPTS_UNAVAILABLE`. It also emits `VENDOR_BANK_DETAILS_UNAVAILABLE`, `VENDOR_STATUS_BINARY`, and the `payment_details_unverifiable` signal where applicable.
+
+### Intuit QuickBooks MCP server
+
+The `quickbooks-mcp` provider is audited against Intuit's local stdio server at commit `c351dc011d9cb14b211857457085f7994d8b1e15`. The server is not published at the package name in its `package.json`, so clone, pin, build, and authenticate it separately:
+
+```bash
+git clone https://github.com/intuit/quickbooks-online-mcp-server.git
+cd quickbooks-online-mcp-server
+git checkout c351dc011d9cb14b211857457085f7994d8b1e15
+npm ci
+npm run build
+npm run auth
+```
+
+Then configure this template with absolute paths:
+
+```bash
+ACCOUNTING_PROVIDER=quickbooks-mcp
+QBO_MCP_SERVER_PATH=/absolute/path/quickbooks-online-mcp-server/dist/index.js
+QBO_MCP_TOKEN_STORE_PATH=/absolute/path/quickbooks-online-mcp-server/.env
+SANCTIONS_SCREENING=fixture
+npm run qbo-mcp:verify
+npm run dev
+```
+
+The adapter exposes only the required read tools and converts their text/JSON output into canonical Zod-validated records. Intuit's MCP PO search cannot filter by printed PO number, so the adapter filters a bounded result window and reports a retryable integration failure instead of a false not-found when that window is exhausted. `quickbooks-mcp` remains read-only until the Phase 3 approval and idempotent-posting workflow is installed.
 
 ### Compose multiple systems
 
