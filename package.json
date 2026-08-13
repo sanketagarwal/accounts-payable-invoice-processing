@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "mastra dev",
     "typecheck": "tsc --noEmit",
-    "test": "INVOICE_READER=fixture ACCOUNTING_PROVIDER=fixture tsx src/scripts/test.ts",
+    "test": "INVOICE_READER=fixture ACCOUNTING_PROVIDER=fixture SANCTIONS_SCREENING= MASTRA_OBSERVABILITY_DB_PATH=:memory: tsx src/scripts/test.ts",
     "fixtures:run": "INVOICE_READER=fixture tsx src/scripts/run-fixtures.ts",
     "fixtures:score": "INVOICE_READER=fixture tsx src/scripts/score-fixtures.ts",
     "invoice:run": "tsx src/scripts/run-invoice.ts",
@@ -15,9 +15,11 @@
     "qbo-mcp:verify": "tsx src/scripts/verify-qbo-mcp.ts"
   },
   "dependencies": {
-    "@mastra/core": "1.57.0",
+    "@mastra/core": "^1.58.0",
+    "@mastra/duckdb": "^1.6.1",
     "@mastra/libsql": "1.19.0",
     "@mastra/mcp": "1.16.0",
+    "@mastra/observability": "^1.16.6",
     "currency-codes": "2.2.0",
     "decimal.js": "10.6.0",
     "dotenv": "16.6.1",

@@ -3,8 +3,12 @@ import { chmodSync, closeSync, mkdirSync, openSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Mastra } from '@mastra/core'
+import { MastraCompositeStore } from '@mastra/core/storage'
+import { DuckDBStore } from '@mastra/duckdb'
 import { LibSQLStore } from '@mastra/libsql'
+import { MastraStorageExporter, Observability } from '@mastra/observability'
 import { invoiceExtractionAgent } from './agents/invoice-extraction.ts'
+import { invoiceChatIntakeAgent } from './agents/invoice-chat-intake.ts'
 import { apAuth, setAuthenticatedReviewer } from './auth.ts'
 import { extractionFidelityScorer } from './scorers/extraction-fidelity.ts'
 import { invoiceReaderWorkflow } from './workflows/invoice-reader.ts'
@@ -18,9 +22,14 @@ if (!configuredStorageUrl) {
   closeSync(openSync(defaultStoragePath, 'a', 0o600))
   chmodSync(defaultStoragePath, 0o600)
 }
+const applicationStorage = new LibSQLStore({ id: 'ap-invoice-storage', url: configuredStorageUrl ?? `file:${defaultStoragePath}` })
+const observabilityPath = process.env.MASTRA_OBSERVABILITY_DB_PATH?.trim() || resolve(fileURLToPath(new URL('../../', import.meta.url)), 'data/observability.duckdb')
+const observabilityStorage = new DuckDBStore({ id: 'ap-invoice-observability', path: observabilityPath, memoryLimit: '512MB' })
+const storage = new MastraCompositeStore({ id: 'ap-invoice-composite-storage', default: applicationStorage, domains: { observability: observabilityStorage.observability } })
 export const mastra = new Mastra({
-  agents: { invoiceExtractionAgent }, workflows: { apInvoiceWorkflow, invoiceReaderWorkflow }, scorers: { extractionFidelityScorer },
-  storage: new LibSQLStore({ id: 'ap-invoice-storage', url: configuredStorageUrl ?? `file:${defaultStoragePath}` }),
+  agents: { invoiceChatIntakeAgent }, workflows: { apInvoiceWorkflow, invoiceReaderWorkflow }, scorers: { extractionFidelityScorer },
+  storage,
+  observability: new Observability({ configs: { default: { serviceName: 'accounts-payable-invoice-processing', exporters: [new MastraStorageExporter()], logging: { enabled: true, level: 'info' } } } }),
   server: { auth: apAuth, middleware: [{ path: '/api/*', handler: async (context, next) => {
     setAuthenticatedReviewer(context.get('requestContext'), await apAuth.getCurrentUser(context.req.raw)); await next()
   } }] },
