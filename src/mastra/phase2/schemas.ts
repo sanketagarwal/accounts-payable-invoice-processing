@@ -65,14 +65,14 @@ export const FinalAssessmentSchema = AssessmentStateSchema.extend({
 export type FinalAssessment = z.infer<typeof FinalAssessmentSchema>
 
 export const ApprovalEvidenceSchema = z.object({
-  status: z.enum(['not_requested', 'not_required', 'approved', 'rejected']), reviewerId: z.string().nullable(),
-  decidedAt: z.string().datetime().nullable(), invoiceDigest: z.string().regex(/^[a-f0-9]{64}$/), comment: z.string().nullable(),
+  status: z.enum(['not_requested', 'not_required', 'approved', 'rejected']), reviewerId: z.string().trim().min(1).nullable(),
+  decidedAt: z.string().datetime().nullable(), invoiceDigest: z.string().regex(/^[a-f0-9]{64}$/), comment: z.string().max(1000).nullable(),
 }).superRefine((value, context) => {
   if (['approved', 'rejected'].includes(value.status) && (!value.reviewerId || !value.decidedAt)) context.addIssue({ code: z.ZodIssueCode.custom, message: 'Human decisions require reviewerId and decidedAt' })
 })
 export type ApprovalEvidence = z.infer<typeof ApprovalEvidenceSchema>
 export const PostingRequestSchema = z.object({
-  idempotencyKey: z.string(), invoice: Phase2InvoiceSchema, vendor: VendorRecordSchema,
+  idempotencyKey: z.string().regex(/^ap-[a-f0-9]{64}$/), invoice: Phase2InvoiceSchema, vendor: VendorRecordSchema,
   purchaseOrder: PurchaseOrderSchema.nullable(), approval: ApprovalEvidenceSchema,
 }).superRefine((value, context) => {
   if (!['approved', 'not_required'].includes(value.approval.status)) context.addIssue({ code: z.ZodIssueCode.custom, message: 'Posting requires approval or an explicit not-required decision' })
@@ -80,8 +80,8 @@ export const PostingRequestSchema = z.object({
 })
 export type PostingRequest = z.infer<typeof PostingRequestSchema>
 export const PostingReceiptSchema = z.object({
-  status: z.enum(['posted', 'already_posted']), providerId: z.string(), externalBillId: z.string(),
-  postedAt: z.string(), idempotencyKey: z.string(),
+  status: z.enum(['posted', 'already_posted']), providerId: z.string().min(1), externalBillId: z.string().min(1),
+  postedAt: z.string().datetime(), idempotencyKey: z.string().regex(/^ap-[a-f0-9]{64}$/),
 })
 export type PostingReceipt = z.infer<typeof PostingReceiptSchema>
 export const Phase3ResultSchema = FinalAssessmentSchema.extend({
