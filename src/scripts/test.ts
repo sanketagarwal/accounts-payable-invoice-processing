@@ -29,6 +29,7 @@ import { makePolicyRouting } from '../mastra/phase2/steps/policy.ts'
 import { makeVendorValidation } from '../mastra/phase2/steps/vendor.ts'
 import { ProviderUnavailableError } from '../mastra/phase2/ports.ts'
 import type { FinalAssessment } from '../mastra/phase2/schemas.ts'
+import { apExecutionWorkflow } from '../mastra/phase3/workflow.ts'
 import { invoiceFixtures, runFixture } from './support.ts'
 
 for (const fixture of invoiceFixtures) {
@@ -185,6 +186,42 @@ await assert.rejects(makeQuickBooksMcpProvider(failingMcp).vendors!.find({ name:
 const truncatedMcp: McpToolClient = { listToolNames: qboMcpClient.listToolNames, call: async () => mcpResult([{ DocNumber: 'OTHER' }]), disconnect: async () => undefined }
 await assert.rejects(new QuickBooksMcpAdapter(truncatedMcp, 1).findByNumber('PO-MISSING'), ProviderUnavailableError)
 
+let createdBill: Record<string, unknown> | undefined
+const postingMcp: McpToolClient = {
+  listToolNames: async () => new Set(['search_vendors', 'search_purchase_orders', 'search_bills', 'create-bill']),
+  call: async (tool, input) => {
+    if (tool === 'search_bills') return createdBill ? mcpResult(createdBill) : mcpResult()
+    if (tool === 'create-bill') { createdBill = { Id: 'qbo_bill_new', ...(input as { params: { bill: object } }).params.bill }; return mcpResult(createdBill) }
+    return mcpResult()
+  }, disconnect: async () => undefined,
+}
+const priorPostingFlag = process.env.QBO_MCP_ENABLE_POSTING, priorExpenseAccount = process.env.QBO_MCP_EXPENSE_ACCOUNT_ID
+try {
+  process.env.QBO_MCP_ENABLE_POSTING = 'true'; delete process.env.QBO_MCP_EXPENSE_ACCOUNT_ID
+  assert.throws(() => makeQuickBooksMcpProvider(postingMcp), /QBO_MCP_EXPENSE_ACCOUNT_ID/)
+  process.env.QBO_MCP_EXPENSE_ACCOUNT_ID = 'expense-1'
+  assert.equal(makeQuickBooksMcpProvider(postingMcp).capabilities.posting, true)
+} finally {
+  if (priorPostingFlag === undefined) delete process.env.QBO_MCP_ENABLE_POSTING; else process.env.QBO_MCP_ENABLE_POSTING = priorPostingFlag
+  if (priorExpenseAccount === undefined) delete process.env.QBO_MCP_EXPENSE_ACCOUNT_ID; else process.env.QBO_MCP_EXPENSE_ACCOUNT_ID = priorExpenseAccount
+}
+const postingAdapter = new QuickBooksMcpAdapter(postingMcp, 1000, { expenseAccountId: 'expense-1', taxAccountId: 'tax-1' })
+const testDigest = '1'.repeat(64)
+const postingRequest = {
+  idempotencyKey: `ap-${testDigest}`, invoice: normalized, vendor: fixtureProvider.vendors ? (await fixtureProvider.vendors.find({ name: normalized.vendorName }))[0]! : undefined!,
+  purchaseOrder: fixtureProvider.purchaseOrders ? (await fixtureProvider.purchaseOrders.findByNumber(normalized.poNumber!))[0]! : null,
+  approval: { status: 'not_required' as const, reviewerId: null, decidedAt: '2026-08-13T00:00:00.000Z', invoiceDigest: testDigest, comment: null },
+}
+assert.equal((await postingAdapter.postBill(postingRequest)).status, 'posted')
+assert.equal((await postingAdapter.postBill(postingRequest)).status, 'already_posted')
+const billPayload = createdBill as { Line: Array<{ Amount: number }>; LinkedTxn: Array<{ TxnId: string }>; PrivateNote: string }
+assert.deepEqual(billPayload.Line.map(line => line.Amount), [100, 8])
+assert.equal(billPayload.LinkedTxn[0]!.TxnId, 'po_1001')
+assert.ok(billPayload.PrivateNote.includes(testDigest))
+await assert.rejects(new QuickBooksMcpAdapter({ ...postingMcp, listToolNames: async () => new Set([...await postingMcp.listToolNames(), 'update_bill']) }, 1000, { expenseAccountId: 'expense-1' }).postBill(postingRequest), ProviderUnavailableError)
+createdBill = undefined
+await assert.rejects(new QuickBooksMcpAdapter(postingMcp, 1000, { expenseAccountId: 'expense-1' }).postBill({ ...postingRequest, invoice: { ...normalized, invoiceNumber: 'TAX-MISSING' } }), /QBO_MCP_TAX_ACCOUNT_ID/)
+
 assert.throws(() => createPhase2Runtime({ provider: quickbooks }), /sanctions/)
 const qboRuntime = createPhase2Runtime({ provider: quickbooks, history: new InMemoryInvoiceHistoryRepository(), policy: new FixturePolicyProvider(), sanctionsFallback: new FixtureSanctionsScreener() })
 let qboState = await makeVendorValidation(qboRuntime)(normalized)
@@ -195,6 +232,7 @@ assert.ok(qboState.decisions.at(-1)!.adaptations.some(a => a.code === 'GOODS_REC
 
 assert.throws(() => makeCompositeProvider({ id: 'unsafe-vendor-po', displayName: 'Unsafe vendor/PO', vendors: fixtureProvider, purchaseOrders: quickbooks }), /vendor ID crosswalk/)
 assert.throws(() => makeCompositeProvider({ id: 'unsafe-vendor-history', displayName: 'Unsafe vendor/history', vendors: fixtureProvider, billHistory: quickbooks }), /vendor ID crosswalk/)
+assert.throws(() => makeCompositeProvider({ id: 'unsafe-posting', displayName: 'Unsafe posting', vendors: quickbooks, purchaseOrders: quickbooks, posting: fixtureProvider }), /vendor\/posting/)
 const splitProvider = makeCompositeProvider({
   id: 'fixture-qbo', displayName: 'Fixture vendors + QuickBooks POs', vendors: fixtureProvider, purchaseOrders: quickbooks, sanctions: fixtureProvider, billHistory: quickbooks,
   identity: { crosswalk: { mapVendorId: async ({ id }) => id === 'qbo_vendor_acme' ? 'vendor_acme' : null } },
@@ -273,6 +311,25 @@ assert.equal((await refreshHistory.findPotentialDuplicates({ vendorId: 'vendor_a
 const approved = await makePolicyRouting(fixtureRuntime)({ ...compositeState, invoice: { ...compositeState.invoice, totalMinor: 100_001 } })
 assert.equal(approved.disposition, 'approval_required')
 
+const approvalRun = await apExecutionWorkflow.createRun(), approvalStart = await approvalRun.start({ inputData: approved })
+assert.equal(approvalStart.status, 'suspended')
+const approvedExecution = await approvalRun.resume({ step: 'approve-invoice', resumeData: { approved: true, comment: 'Reviewed' }, requestContext })
+assert.equal(approvedExecution.status, 'success')
+if (approvedExecution.status === 'success') {
+  assert.equal(approvedExecution.result.executionStatus, 'posted')
+  assert.equal(approvedExecution.result.approval.reviewerId, 'reviewer')
+}
+const rejectedRun = await apExecutionWorkflow.createRun(), rejectedStart = await rejectedRun.start({ inputData: approved })
+assert.equal(rejectedStart.status, 'suspended')
+const rejectedExecution = await rejectedRun.resume({ step: 'approve-invoice', resumeData: { approved: false }, requestContext })
+assert.equal(rejectedExecution.status, 'success')
+if (rejectedExecution.status === 'success') assert.equal(rejectedExecution.result.executionStatus, 'rejected')
+const unauthenticatedApproval = await apExecutionWorkflow.createRun(), unauthenticatedStart = await unauthenticatedApproval.start({ inputData: approved })
+assert.equal(unauthenticatedStart.status, 'suspended')
+console.error = () => undefined
+const unauthenticatedResult = await unauthenticatedApproval.resume({ step: 'approve-invoice', resumeData: { approved: true } }).finally(() => { console.error = originalConsoleError })
+assert.equal(unauthenticatedResult.status, 'failed')
+
 const unavailableProvider = assertProvider({ ...fixtureProvider, id: 'unavailable', vendors: { find: async () => { throw new ProviderUnavailableError('unavailable', 'find vendor') } } })
 const unavailableState = await makeVendorValidation(createPhase2Runtime({ provider: unavailableProvider }))(normalized)
 assert.equal(unavailableState.decisions[0]!.outcome, 'unknown_retry')
@@ -280,4 +337,5 @@ assert.equal(unavailableState.decisions[0]!.outcome, 'unknown_retry')
 const workflow = mastra.getWorkflow('apInvoiceWorkflow'), run = await workflow.createRun(), result = await run.start({ inputData: clean.document })
 assert.equal(result.status, 'success')
 assert.equal((result as { result: FinalAssessment }).result.disposition, 'auto_post')
+if (result.status === 'success') assert.equal(result.result.executionStatus, 'posted')
 console.log('reader, provider, and Phase 2 workflow tests passed')

@@ -1,5 +1,5 @@
-import type { GoodsReceiptRepository, InvoiceHistoryRepository, PolicyProvider, PurchaseOrderRepository, SanctionsScreener, VendorLookup, VendorRepository, VendorStatusRestrictionSource } from '../ports.ts'
-import type { GoodsReceipt, PolicyConfig, PriorInvoice, PurchaseOrder, VendorRecord } from '../schemas.ts'
+import type { GoodsReceiptRepository, InvoiceHistoryRepository, PolicyProvider, PostingAdapter, PurchaseOrderRepository, SanctionsScreener, VendorLookup, VendorRepository, VendorStatusRestrictionSource } from '../ports.ts'
+import { PostingReceiptSchema, PostingRequestSchema, type GoodsReceipt, type PolicyConfig, type PostingReceipt, type PriorInvoice, type PurchaseOrder, type VendorRecord } from '../schemas.ts'
 
 export const fixtureDb: { vendors: VendorRecord[]; purchaseOrders: PurchaseOrder[]; receipts: GoodsReceipt[]; priorInvoices: PriorInvoice[]; policy: PolicyConfig } = {
   vendors: [
@@ -30,3 +30,13 @@ export class InMemoryInvoiceHistoryRepository implements InvoiceHistoryRepositor
 export class FixtureSanctionsScreener implements SanctionsScreener { async screen(vendor: VendorRecord) { return { matched: norm(vendor.name).includes('sanctioned'), list: null, reference: null } } }
 export class FixturePolicyProvider implements PolicyProvider { async getPolicy() { return fixtureDb.policy } }
 export class FixtureStatusRestrictionSource implements VendorStatusRestrictionSource { async getRestriction() { return null as 'on_hold' | 'blocked' | null } }
+export class FixturePostingAdapter implements PostingAdapter {
+  private readonly receipts = new Map<string, PostingReceipt>()
+  async postBill(input: Parameters<PostingAdapter['postBill']>[0]) {
+    input = PostingRequestSchema.parse(input)
+    const prior = this.receipts.get(input.idempotencyKey)
+    if (prior) return { ...prior, status: 'already_posted' as const }
+    const receipt = PostingReceiptSchema.parse({ status: 'posted', providerId: 'fixture', externalBillId: `fixture-${input.idempotencyKey.slice(0, 16)}`, postedAt: new Date().toISOString(), idempotencyKey: input.idempotencyKey })
+    this.receipts.set(input.idempotencyKey, receipt); return receipt
+  }
+}

@@ -63,3 +63,29 @@ export const FinalAssessmentSchema = AssessmentStateSchema.extend({
   policy: PolicyConfigSchema,
 })
 export type FinalAssessment = z.infer<typeof FinalAssessmentSchema>
+
+export const ApprovalEvidenceSchema = z.object({
+  status: z.enum(['not_requested', 'not_required', 'approved', 'rejected']), reviewerId: z.string().nullable(),
+  decidedAt: z.string().datetime().nullable(), invoiceDigest: z.string().regex(/^[a-f0-9]{64}$/), comment: z.string().nullable(),
+}).superRefine((value, context) => {
+  if (['approved', 'rejected'].includes(value.status) && (!value.reviewerId || !value.decidedAt)) context.addIssue({ code: z.ZodIssueCode.custom, message: 'Human decisions require reviewerId and decidedAt' })
+})
+export type ApprovalEvidence = z.infer<typeof ApprovalEvidenceSchema>
+export const PostingRequestSchema = z.object({
+  idempotencyKey: z.string(), invoice: Phase2InvoiceSchema, vendor: VendorRecordSchema,
+  purchaseOrder: PurchaseOrderSchema.nullable(), approval: ApprovalEvidenceSchema,
+}).superRefine((value, context) => {
+  if (!['approved', 'not_required'].includes(value.approval.status)) context.addIssue({ code: z.ZodIssueCode.custom, message: 'Posting requires approval or an explicit not-required decision' })
+  if (value.idempotencyKey !== `ap-${value.approval.invoiceDigest}`) context.addIssue({ code: z.ZodIssueCode.custom, message: 'Idempotency key must bind to the approved invoice digest' })
+})
+export type PostingRequest = z.infer<typeof PostingRequestSchema>
+export const PostingReceiptSchema = z.object({
+  status: z.enum(['posted', 'already_posted']), providerId: z.string(), externalBillId: z.string(),
+  postedAt: z.string(), idempotencyKey: z.string(),
+})
+export type PostingReceipt = z.infer<typeof PostingReceiptSchema>
+export const Phase3ResultSchema = FinalAssessmentSchema.extend({
+  executionStatus: z.enum(['not_postable', 'ready_to_post', 'rejected', 'posting_unavailable', 'posting_failed', 'posted']),
+  approval: ApprovalEvidenceSchema, posting: PostingReceiptSchema.nullable(), postingError: z.string().nullable(),
+})
+export type Phase3Result = z.infer<typeof Phase3ResultSchema>
