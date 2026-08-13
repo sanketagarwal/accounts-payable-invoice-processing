@@ -57,9 +57,10 @@ export class QuickBooksMcpAdapter implements VendorRepository, PurchaseOrderRepo
     const config = this.postingConfig
     if (!config) throw new Error('QuickBooks MCP posting is disabled')
     if (input.invoice.invoiceNumber.length > 21) throw new PostingConflictError('QuickBooks bill DocNumber cannot exceed 21 characters')
+    const marker = `AP workflow idempotency: ${input.idempotencyKey}`
     const prior = await this.call('search_bills', { criteria: [{ field: 'DocNumber', value: input.invoice.invoiceNumber, operator: '=' }], fetchAll: true })
     if (prior.length) {
-      const exact = prior.find(row => row.VendorRef && (row.VendorRef as { value?: string }).value === input.vendor.id && row.TotalAmt === major(input.invoice.totalMinor, input.invoice.currency) && ((row.CurrencyRef as { value?: string } | undefined)?.value ?? input.invoice.currency) === input.invoice.currency)
+      const exact = prior.find(row => row.PrivateNote === marker && row.TxnDate === input.invoice.invoiceDate && row.VendorRef && (row.VendorRef as { value?: string }).value === input.vendor.id && row.TotalAmt === major(input.invoice.totalMinor, input.invoice.currency) && ((row.CurrencyRef as { value?: string } | undefined)?.value ?? input.invoice.currency) === input.invoice.currency)
       if (!exact?.Id) throw new PostingConflictError(`QuickBooks already has a conflicting bill numbered ${input.invoice.invoiceNumber}`)
       return PostingReceiptSchema.parse({ status: 'already_posted', providerId: 'quickbooks-mcp', externalBillId: exact.Id, postedAt: new Date().toISOString(), idempotencyKey: input.idempotencyKey })
     }
@@ -76,7 +77,7 @@ export class QuickBooksMcpAdapter implements VendorRepository, PurchaseOrderRepo
     const bill = {
       VendorRef: { value: input.vendor.id }, DocNumber: input.invoice.invoiceNumber, TxnDate: input.invoice.invoiceDate,
       CurrencyRef: { value: input.invoice.currency }, TotalAmt: major(input.invoice.totalMinor, input.invoice.currency), Line: line,
-      PrivateNote: `AP workflow idempotency: ${input.idempotencyKey}`,
+      PrivateNote: marker,
       ...(config.apAccountId && { APAccountRef: { value: config.apAccountId } }),
       ...(input.purchaseOrder && { LinkedTxn: [{ TxnId: input.purchaseOrder.id, TxnType: 'PurchaseOrder' }] }),
     }

@@ -6,7 +6,7 @@ type Ref = { value?: string; name?: string }
 type QboLine = { Amount?: number; Description?: string; ItemBasedExpenseLineDetail?: { ItemRef?: Ref; Qty?: number; UnitPrice?: number } }
 export type QboVendor = { Id?: string; DisplayName?: string; Active?: boolean; TaxIdentifier?: string }
 export type QboPurchaseOrder = { Id?: string; DocNumber?: string; VendorRef?: Ref; CurrencyRef?: Ref; TotalAmt?: number; Line?: QboLine[] }
-export type QboBill = { Id?: string; DocNumber?: string; VendorRef?: Ref; CurrencyRef?: Ref; TotalAmt?: number; TxnDate?: string }
+export type QboBill = { Id?: string; DocNumber?: string; VendorRef?: Ref; CurrencyRef?: Ref; TotalAmt?: number; TxnDate?: string; PrivateNote?: string }
 export interface QboClient { query<T>(entity: string, query: string): Promise<T[]> }
 export class QboUnavailableError extends ProviderUnavailableError { constructor(operation: string, cause?: unknown) { super('quickbooks', operation, { cause }); this.name = 'QboUnavailableError' } }
 const quote = (value: string) => value.replaceAll("'", "\\'")

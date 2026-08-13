@@ -36,6 +36,8 @@ Open the URL printed by `mastra dev`, select `apInvoiceWorkflow`, and start it w
 
 The workflow uses local fixtures by default, so this path needs no model or accounting-system credentials. Select `invoiceReaderWorkflow` to inspect Phase 1 alone. The decision and execution workflows are intentionally exposed only through `apInvoiceWorkflow`, so Studio cannot bypass the trusted reader boundary.
 
+Studio protects its API with the local `SimpleAuth` credentials in `.env.example`. Sign in with any email and use `MASTRA_AUTH_TOKEN` as the password. The example token is for localhost only; production startup requires explicit credentials, and a deployed template should replace `SimpleAuth` with its JWT/SSO provider.
+
 ## Phase 1: trusted reader
 
 `INVOICE_READER=fixture` returns canned extractions for deterministic local and CI tests. `INVOICE_READER=vision` sends a real PDF/image to the configured multimodal model:
@@ -66,7 +68,7 @@ await run.resume({
 
 For the standalone `invoiceReaderWorkflow`, `step: 'verify-invoice'` is also valid. If more suspension points are added later, pass the nested path returned in the run's `suspended` array.
 
-For local Studio testing, put `{ "reviewerId": "local-reviewer" }` in the request-context editor. In production, authentication middleware must overwrite this value from the verified principal; never trust a reviewer ID supplied in the correction payload.
+The server middleware deletes any caller-provided `reviewerId` and replaces it from the authenticated approver. A viewer or unauthenticated caller cannot authorize a resume. Direct, in-process workflow calls must similarly construct request context only from their trusted authentication layer.
 
 Reference resolution happens after review, so corrected vendor names and PO numbers map to fresh `vendorId` and `poId` values. The resolver is deliberately mocked and does not make a vendor-validity decision.
 
@@ -150,7 +152,7 @@ The workflow—not the model—calls only `create-bill`; the MCP client allowlis
 
 ### Phase 3 approval and posting
 
-`auto_post` proceeds directly. `approval_required` suspends with the invoice digest, amount, and reason codes. Resume with a decision while supplying the authenticated reviewer through request context:
+`auto_post` proceeds directly. `approval_required` suspends with the invoice digest, amount, and reason codes. Resume with a decision; the server derives reviewer identity from the authenticated session and overwrites request context before the workflow runs:
 
 ```ts
 await run.resume({

@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { Mastra } from '@mastra/core'
 import { LibSQLStore } from '@mastra/libsql'
 import { invoiceExtractionAgent } from './agents/invoice-extraction.ts'
+import { apAuth, setAuthenticatedReviewer } from './auth.ts'
 import { extractionFidelityScorer } from './scorers/extraction-fidelity.ts'
 import { invoiceReaderWorkflow } from './workflows/invoice-reader.ts'
 import { apInvoiceWorkflow } from './workflows/ap-invoice.ts'
@@ -20,4 +21,7 @@ if (!configuredStorageUrl) {
 export const mastra = new Mastra({
   agents: { invoiceExtractionAgent }, workflows: { apInvoiceWorkflow, invoiceReaderWorkflow }, scorers: { extractionFidelityScorer },
   storage: new LibSQLStore({ id: 'ap-invoice-storage', url: configuredStorageUrl ?? `file:${defaultStoragePath}` }),
+  server: { auth: apAuth, middleware: [{ path: '/api/*', handler: async (context, next) => {
+    setAuthenticatedReviewer(context.get('requestContext'), await apAuth.getCurrentUser(context.req.raw)); await next()
+  } }] },
 })

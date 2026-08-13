@@ -3,6 +3,7 @@ import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { RequestContext } from '@mastra/core/request-context'
 import { defaultStoragePath, mastra } from '../mastra/index.ts'
+import { setAuthenticatedReviewer } from '../mastra/auth.ts'
 import { detectMediaType, invoiceReader, prepareDocument } from '../mastra/readers/invoice-reader.ts'
 import { extractionFidelityScorer, scoreExtraction } from '../mastra/scorers/extraction-fidelity.ts'
 import type { ExtractedInvoice } from '../mastra/schemas/invoice.ts'
@@ -106,6 +107,11 @@ if (sourceResult.status === 'success') assert.equal(sourceResult.result.extracte
 const reviewRun = await readerWorkflow.createRun(), firstReview = await reviewRun.start({ inputData: invoiceFixtures[1]!.document })
 assert.equal(firstReview.status, 'suspended')
 const requestContext = new RequestContext<{ reviewerId?: string }>([['reviewerId', 'reviewer']])
+const forgedContext = new RequestContext<{ reviewerId?: string }>([['reviewerId', 'forged']])
+setAuthenticatedReviewer(forgedContext, { id: 'viewer', name: 'Viewer', role: 'viewer' })
+assert.equal(forgedContext.get('reviewerId'), undefined)
+setAuthenticatedReviewer(forgedContext, { id: 'verified-approver', name: 'Approver', role: 'ap_approver' })
+assert.equal(forgedContext.get('reviewerId'), 'verified-approver')
 const badCorrection = { ...invoiceFixtures[1]!.groundTruth, total: 61, source: 'PDF' as const }
 const secondReview = await reviewRun.resume({ step: 'verify-invoice', resumeData: { extracted: badCorrection }, requestContext })
 assert.equal(secondReview.status, 'suspended')
@@ -218,6 +224,8 @@ const billPayload = createdBill as { Line: Array<{ Amount: number }>; LinkedTxn:
 assert.deepEqual(billPayload.Line.map(line => line.Amount), [100, 8])
 assert.equal(billPayload.LinkedTxn[0]!.TxnId, 'po_1001')
 assert.ok(billPayload.PrivateNote.includes(testDigest))
+createdBill = { ...createdBill, PrivateNote: 'unrelated bill' }
+await assert.rejects(postingAdapter.postBill(postingRequest), /conflicting bill/)
 await assert.rejects(new QuickBooksMcpAdapter({ ...postingMcp, listToolNames: async () => new Set([...await postingMcp.listToolNames(), 'update_bill']) }, 1000, { expenseAccountId: 'expense-1' }).postBill(postingRequest), ProviderUnavailableError)
 createdBill = undefined
 await assert.rejects(new QuickBooksMcpAdapter(postingMcp, 1000, { expenseAccountId: 'expense-1' }).postBill({ ...postingRequest, invoice: { ...normalized, invoiceNumber: 'TAX-MISSING' } }), /QBO_MCP_TAX_ACCOUNT_ID/)
