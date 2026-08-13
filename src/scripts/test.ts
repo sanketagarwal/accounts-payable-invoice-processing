@@ -173,6 +173,13 @@ assert.equal((await qboMcp.billHistorySeed!())[0]!.id, 'qbo_prior')
 assert.deepEqual(mcpCalls.map(call => call.tool), ['search_vendors', 'search_purchase_orders', 'search_bills'])
 const incompleteMcp: McpToolClient = { listToolNames: async () => new Set(['search_vendors']), call: async () => mcpResult(), disconnect: async () => undefined }
 await assert.rejects(makeQuickBooksMcpProvider(incompleteMcp).vendors!.find({ name: 'Acme Supplies' }), ProviderUnavailableError)
+const writableMcp: McpToolClient = { listToolNames: async () => new Set(['search_vendors', 'search_purchase_orders', 'search_bills', 'create-bill']), call: qboMcpClient.call, disconnect: async () => undefined }
+await assert.rejects(makeQuickBooksMcpProvider(writableMcp).vendors!.find({ name: 'Acme Supplies' }), ProviderUnavailableError)
+let discoveries = 0
+const recoveringMcp: McpToolClient = { listToolNames: async () => ++discoveries === 1 ? new Set() : qboMcpClient.listToolNames(), call: qboMcpClient.call, disconnect: async () => undefined }
+const recoveringProvider = makeQuickBooksMcpProvider(recoveringMcp)
+await assert.rejects(recoveringProvider.vendors!.find({ name: 'Acme Supplies' }), ProviderUnavailableError)
+assert.equal((await recoveringProvider.vendors!.find({ name: 'Acme Supplies' }))[0]!.id, 'qbo_vendor_acme')
 const failingMcp: McpToolClient = { listToolNames: qboMcpClient.listToolNames, call: async () => ({ content: [{ type: 'text', text: 'Error searching vendors: unavailable' }] }), disconnect: async () => undefined }
 await assert.rejects(makeQuickBooksMcpProvider(failingMcp).vendors!.find({ name: 'Acme Supplies' }), ProviderUnavailableError)
 const truncatedMcp: McpToolClient = { listToolNames: qboMcpClient.listToolNames, call: async () => mcpResult([{ DocNumber: 'OTHER' }]), disconnect: async () => undefined }

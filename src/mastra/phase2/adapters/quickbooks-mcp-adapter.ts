@@ -15,11 +15,16 @@ export class QuickBooksMcpAdapter implements VendorRepository, PurchaseOrderRepo
   private verification?: Promise<void>
   constructor(private readonly client: McpToolClient, private readonly poLimit = 1000) { if (!Number.isInteger(poLimit) || poLimit < 1 || poLimit > 1000) throw new Error('QuickBooks MCP PO limit must be an integer from 1 to 1000') }
   async verifyTools() {
-    const tools = await this.client.listToolNames(), missing = requiredTools.filter(tool => !tools.has(tool))
+    const tools = await this.client.listToolNames(), missing = requiredTools.filter(tool => !tools.has(tool)), mutations = [...tools].filter(tool => /^(create|update|delete)[_-]/.test(tool))
     if (missing.length) throw new Error(`QuickBooks MCP is missing required tools: ${missing.join(', ')}`)
+    if (mutations.length) throw new Error(`QuickBooks MCP read provider refuses mutation tools: ${mutations.join(', ')}`)
+  }
+  private async ensureVerified() {
+    const verification = this.verification ??= this.verifyTools()
+    try { await verification } catch (error) { if (this.verification === verification) this.verification = undefined; throw error }
   }
   private async call(tool: typeof requiredTools[number], params: unknown) {
-    try { await (this.verification ??= this.verifyTools()); return records(await this.client.call(tool, { params })) }
+    try { await this.ensureVerified(); return records(await this.client.call(tool, { params })) }
     catch (error) { if (error instanceof ProviderUnavailableError) throw error; throw new ProviderUnavailableError('quickbooks-mcp', tool, { cause: error }) }
   }
   async find(input: VendorLookup) {

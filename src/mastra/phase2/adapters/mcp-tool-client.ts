@@ -12,9 +12,8 @@ export interface McpToolClient {
 }
 
 export class MastraMcpToolClient implements McpToolClient {
-  private tools?: Awaited<ReturnType<MCPClient['listTools']>>
   constructor(private readonly client: MCPClient, private readonly serverName: string) {}
-  private async getTools() { return this.tools ??= await this.client.listTools() }
+  private getTools() { return this.client.listTools() }
   async listToolNames() { const prefix = `${this.serverName}_`; return new Set(Object.keys(await this.getTools()).map(name => name.startsWith(prefix) ? name.slice(prefix.length) : name)) }
   async call(toolName: string, input: unknown) {
     const tool = (await this.getTools())[`${this.serverName}_${toolName}`]
