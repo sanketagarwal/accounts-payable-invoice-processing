@@ -14,10 +14,13 @@ import { createPhase2Runtime } from '../mastra/phase2/composition.ts'
 import { toMinorUnits, normalizePhase1Output } from '../mastra/phase2/money.ts'
 import { FixturePolicyProvider, FixtureSanctionsScreener, InMemoryInvoiceHistoryRepository } from '../mastra/phase2/adapters/fixture.ts'
 import { QuickBooksAdapter, type QboClient } from '../mastra/phase2/adapters/quickbooks-adapter.ts'
+import { QuickBooksMcpAdapter } from '../mastra/phase2/adapters/quickbooks-mcp-adapter.ts'
+import type { McpToolClient } from '../mastra/phase2/adapters/mcp-tool-client.ts'
 import { makeCompositeProvider } from '../mastra/phase2/providers/composite-provider.ts'
 import { NotImplementedError } from '../mastra/phase2/providers/connector-provider.ts'
 import { fixtureProvider } from '../mastra/phase2/providers/fixture-provider.ts'
 import { makeQuickBooksProvider } from '../mastra/phase2/providers/quickbooks-provider.ts'
+import { makeQuickBooksMcpProvider } from '../mastra/phase2/providers/quickbooks-mcp-provider.ts'
 import { providerRegistry } from '../mastra/phase2/providers/registry.ts'
 import { assertProvider } from '../mastra/phase2/providers/types.ts'
 import { makeInvoiceMatch } from '../mastra/phase2/steps/match.ts'
@@ -150,6 +153,31 @@ const billPages: Record<number, unknown[]> = {
 const pageStarts: number[] = [], pagingClient: QboClient = { query: async <T>(_entity: string, query: string) => { const start = Number(query.match(/startposition (\d+)/i)?.[1]); pageStarts.push(start); return (billPages[start] ?? []) as T[] } }
 assert.equal((await new QuickBooksAdapter(pagingClient, 2).billHistorySeed()).length, 3)
 assert.deepEqual(pageStarts, [1, 3])
+
+const mcpCalls: Array<{ tool: string; input: unknown }> = []
+const mcpResult = (...values: unknown[]) => ({ content: [{ type: 'text', text: `Found ${values.length} records:` }, ...values.map(value => ({ type: 'text', text: JSON.stringify(value) }))] })
+const qboMcpClient: McpToolClient = {
+  listToolNames: async () => new Set(['search_vendors', 'search_purchase_orders', 'search_bills']),
+  call: async (tool, input) => {
+    mcpCalls.push({ tool, input })
+    if (tool === 'search_vendors') return mcpResult(qboRows.Vendor![0])
+    if (tool === 'search_purchase_orders') return mcpResult(qboRows.PurchaseOrder)
+    return mcpResult(qboRows.Bill![0])
+  },
+  disconnect: async () => undefined,
+}
+const qboMcp = makeQuickBooksMcpProvider(qboMcpClient)
+assert.equal((await qboMcp.vendors!.find({ name: 'Acme Supplies' }))[0]!.id, 'qbo_vendor_acme')
+assert.equal((await qboMcp.purchaseOrders!.findByNumber('PO-1001'))[0]!.id, 'qbo_po_1001')
+assert.equal((await qboMcp.billHistorySeed!())[0]!.id, 'qbo_prior')
+assert.deepEqual(mcpCalls.map(call => call.tool), ['search_vendors', 'search_purchase_orders', 'search_bills'])
+const incompleteMcp: McpToolClient = { listToolNames: async () => new Set(['search_vendors']), call: async () => mcpResult(), disconnect: async () => undefined }
+await assert.rejects(makeQuickBooksMcpProvider(incompleteMcp).vendors!.find({ name: 'Acme Supplies' }), ProviderUnavailableError)
+const failingMcp: McpToolClient = { listToolNames: qboMcpClient.listToolNames, call: async () => ({ content: [{ type: 'text', text: 'Error searching vendors: unavailable' }] }), disconnect: async () => undefined }
+await assert.rejects(makeQuickBooksMcpProvider(failingMcp).vendors!.find({ name: 'Acme Supplies' }), ProviderUnavailableError)
+const truncatedMcp: McpToolClient = { listToolNames: qboMcpClient.listToolNames, call: async () => mcpResult([{ DocNumber: 'OTHER' }]), disconnect: async () => undefined }
+await assert.rejects(new QuickBooksMcpAdapter(truncatedMcp, 1).findByNumber('PO-MISSING'), ProviderUnavailableError)
+
 assert.throws(() => createPhase2Runtime({ provider: quickbooks }), /sanctions/)
 const qboRuntime = createPhase2Runtime({ provider: quickbooks, history: new InMemoryInvoiceHistoryRepository(), policy: new FixturePolicyProvider(), sanctionsFallback: new FixtureSanctionsScreener() })
 let qboState = await makeVendorValidation(qboRuntime)(normalized)
