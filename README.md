@@ -4,9 +4,9 @@ A Mastra template that keeps document reading probabilistic and financial decisi
 
 The complete workflow is:
 
-`read invoice → normalize money/references → validate vendor → match PO/receipts → detect duplicates → apply policy`
+`read invoice → normalize money/references → validate vendor → match PO/receipts → detect duplicates → apply policy → approve when required → post`
 
-It stops at a Phase 2 disposition (`auto_post`, `approval_required`, `review`, `blocked`, `retry`, or `verify_extraction`). Human approval suspension and accounting posting belong to Phase 3 and are intentionally not implemented here.
+The model reads the document; deterministic workflow steps own every financial control, approval gate, and write. Only `auto_post` or an authenticated human approval can reach the posting adapter.
 
 ## Run the template
 
@@ -34,7 +34,9 @@ Open the URL printed by `mastra dev`, select `apInvoiceWorkflow`, and start it w
 }
 ```
 
-The workflow uses local fixtures by default, so this path needs no model or accounting-system credentials. Select `invoiceReaderWorkflow` to inspect Phase 1 alone. Phase 2 is intentionally exposed only through `apInvoiceWorkflow`, so it cannot bypass the trusted reader boundary.
+The workflow uses local fixtures by default, so this path needs no model or accounting-system credentials. Select `invoiceReaderWorkflow` to inspect Phase 1 alone. The decision and execution workflows are intentionally exposed only through `apInvoiceWorkflow`, so Studio cannot bypass the trusted reader boundary.
+
+Studio protects its API with the local `SimpleAuth` credentials in `.env.example`. Sign in with any email and use `MASTRA_AUTH_TOKEN` as the password. The example token is for localhost only; production startup requires explicit credentials, and a deployed template should replace `SimpleAuth` with its JWT/SSO provider.
 
 ## Phase 1: trusted reader
 
@@ -66,7 +68,7 @@ await run.resume({
 
 For the standalone `invoiceReaderWorkflow`, `step: 'verify-invoice'` is also valid. If more suspension points are added later, pass the nested path returned in the run's `suspended` array.
 
-For local Studio testing, put `{ "reviewerId": "local-reviewer" }` in the request-context editor. In production, authentication middleware must overwrite this value from the verified principal; never trust a reviewer ID supplied in the correction payload.
+The server middleware deletes any caller-provided `reviewerId` and replaces it from the authenticated approver. A viewer or unauthenticated caller cannot authorize a resume. Direct, in-process workflow calls must similarly construct request context only from their trusted authentication layer.
 
 Reference resolution happens after review, so corrected vendor names and PO numbers map to fresh `vendorId` and `poId` values. The resolver is deliberately mocked and does not make a vendor-validity decision.
 
@@ -86,12 +88,12 @@ Select one globally at Mastra startup:
 ACCOUNTING_PROVIDER=fixture
 ```
 
-| Provider | Vendors | POs | Receipts | Bill seed | Bank details | Status | Sanctions |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| `fixture` | yes | yes | yes | yes | yes | full | yes |
-| `quickbooks` | yes | yes | no | yes | no | binary | no |
-| `quickbooks-mcp` | yes | yes* | no | yes | no | binary | no |
-| `connector` | stub | stub | stub | stub | stub | stub | stub |
+| Provider | Vendors | POs | Receipts | Bill seed | Posting | Bank details | Status | Sanctions |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `fixture` | yes | yes | yes | yes | yes | yes | full | yes |
+| `quickbooks` | yes | yes | no | yes | no | no | binary | no |
+| `quickbooks-mcp` | yes | yes* | no | yes | opt-in | no | binary | no |
+| `connector` | stub | stub | stub | stub | stub | stub | stub | stub |
 
 Invalid providers and missing required capabilities fail during startup. A disabled capability means its port is absent—it never silently returns an empty result.
 
@@ -134,7 +136,32 @@ npm run qbo-mcp:verify
 npm run dev
 ```
 
-The adapter exposes only the required read tools and converts their text/JSON output into canonical Zod-validated records. Intuit's MCP PO search cannot filter by printed PO number, so the adapter filters a bounded result window and reports a retryable integration failure instead of a false not-found when that window is exhausted. `quickbooks-mcp` remains read-only until the Phase 3 approval and idempotent-posting workflow is installed.
+The adapter converts MCP text/JSON into canonical Zod-validated records. Intuit's MCP PO search cannot filter by printed PO number, so it filters a bounded result window and reports a retryable integration failure instead of a false not-found when that window is exhausted.
+
+Posting is disabled unless it is explicitly enabled with QuickBooks internal account IDs:
+
+```bash
+QBO_MCP_ENABLE_POSTING=true
+QBO_MCP_EXPENSE_ACCOUNT_ID=your-expense-account-id
+QBO_MCP_TAX_ACCOUNT_ID=your-tax-account-id # required for invoices containing tax
+QBO_MCP_AP_ACCOUNT_ID=your-ap-account-id    # optional
+npm run qbo-mcp:verify
+```
+
+The workflow—not the model—calls only `create-bill`; the MCP client allowlist denies every other mutation. Before creating a bill it searches by invoice number and either returns `already_posted` for an exact match or stops on a conflict. Intuit's current MCP tool does not expose QuickBooks' `requestid` parameter, so this is safe retry handling rather than a claim of database-level exactly-once delivery. Pin and re-audit the upstream server before changing its commit.
+
+### Phase 3 approval and posting
+
+`auto_post` proceeds directly. `approval_required` suspends with the invoice digest, amount, and reason codes. Resume with a decision; the server derives reviewer identity from the authenticated session and overwrites request context before the workflow runs:
+
+```ts
+await run.resume({
+  resumeData: { approved: true, comment: 'Reviewed against contract' },
+  requestContext, // trusted middleware supplies reviewerId
+})
+```
+
+A rejection finishes without writing. Review, blocked, retry, and extraction-verification outcomes are never postable. The final result records `executionStatus`, immutable approval evidence, and the external bill receipt or a visible posting error.
 
 ### Compose multiple systems
 
@@ -179,7 +206,7 @@ Pipeline steps never consume raw accounting-system objects or read environment v
 
 ## Results and storage
 
-Mastra persists workflow state and snapshots through `LibSQLStore` at `MASTRA_DB_URL`. Without that variable it uses the owner-only `<project>/data/mastra.db`. Final output contains the normalized invoice, resolved canonical records, decisions, adaptations, sources, policy, and disposition. The fixture invoice-history repository is intentionally in-memory; a production deployment should bind the pipeline-owned history port to its durable database.
+Mastra persists workflow state and snapshots through `LibSQLStore` at `MASTRA_DB_URL`. Without that variable it uses the owner-only `<project>/data/mastra.db`. Final output contains the normalized invoice, resolved canonical records, decisions, adaptations, sources, policy, disposition, approval evidence, and posting receipt. The fixture invoice-history and posting adapters are intentionally in-memory; a production deployment should bind pipeline history to its durable database.
 
 Useful commands:
 

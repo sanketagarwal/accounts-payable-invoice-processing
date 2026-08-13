@@ -1,6 +1,6 @@
 import type { GoodsReceiptRepository, PurchaseOrderRepository, VendorLookup, VendorRepository } from './ports.ts'
 import { ProviderUnavailableError } from './ports.ts'
-import { GoodsReceiptSchema, PriorInvoiceSchema, PurchaseOrderSchema, SanctionsResultSchema, VendorRecordSchema } from './schemas.ts'
+import { GoodsReceiptSchema, PostingReceiptSchema, PriorInvoiceSchema, PurchaseOrderSchema, SanctionsResultSchema, VendorRecordSchema, type PostingRequest } from './schemas.ts'
 import { assertProvider, type AccountingProvider } from './providers/types.ts'
 
 export interface FaultingVendorCase { repository: VendorRepository; lookup: VendorLookup }
@@ -10,6 +10,7 @@ export interface ProviderConformanceCases {
   vendors?: { found: VendorLookup; missing: VendorLookup; transportFailure?: FaultingVendorCase }
   purchaseOrders?: { found: string; missing: string; transportFailure?: FaultingPurchaseOrderCase }
   goodsReceipts?: { found: string; missing: string; transportFailure?: FaultingGoodsReceiptCase }
+  posting?: PostingRequest
 }
 export interface ConformanceReport { providerId: string; checks: string[] }
 
@@ -30,6 +31,7 @@ export async function runProviderConformance(provider: AccountingProvider, cases
   absent(provider.capabilities.goodsReceipts, provider.goodsReceipts, 'goodsReceipts')
   absent(provider.capabilities.sanctions, provider.sanctions, 'sanctions')
   absent(provider.capabilities.billHistory, provider.billHistorySeed, 'billHistory')
+  absent(provider.capabilities.posting, provider.posting, 'posting')
 
   if (provider.vendors) {
     check(cases.vendors, 'Vendor conformance cases are required')
@@ -64,6 +66,12 @@ export async function runProviderConformance(provider: AccountingProvider, cases
   if (provider.billHistorySeed) {
     const history = await provider.billHistorySeed(); history.forEach(value => PriorInvoiceSchema.parse(value))
     checks.push('billHistory: canonical seed')
+  }
+  if (provider.posting) {
+    check(cases.posting, 'Posting conformance case is required')
+    const first = PostingReceiptSchema.parse(await provider.posting.postBill(cases.posting!)), second = PostingReceiptSchema.parse(await provider.posting.postBill(cases.posting!))
+    check(first.idempotencyKey === second.idempotencyKey && second.status === 'already_posted', 'Posting must be idempotent')
+    checks.push('posting: canonical and idempotent receipt')
   }
   return { providerId: provider.id, checks }
 }

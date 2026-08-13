@@ -12,10 +12,11 @@ export interface McpToolClient {
 }
 
 export class MastraMcpToolClient implements McpToolClient {
-  constructor(private readonly client: MCPClient, private readonly serverName: string) {}
+  constructor(private readonly client: MCPClient, private readonly serverName: string, private readonly allowedTools: ReadonlySet<string>) {}
   private getTools() { return this.client.listTools() }
   async listToolNames() { const prefix = `${this.serverName}_`; return new Set(Object.keys(await this.getTools()).map(name => name.startsWith(prefix) ? name.slice(prefix.length) : name)) }
   async call(toolName: string, input: unknown) {
+    if (!this.allowedTools.has(toolName)) throw new Error(`MCP tool not allowed: ${toolName}`)
     const tool = (await this.getTools())[`${this.serverName}_${toolName}`]
     if (!tool?.execute) throw new Error(`MCP tool unavailable: ${toolName}`)
     return tool.execute(input, { ...createObservabilityContext(), observe: noopObserve, requestContext: new RequestContext() })
@@ -29,12 +30,13 @@ const requiredPath = (name: string) => {
   return value
 }
 
-export function createQuickBooksMcpToolClient(): McpToolClient {
+export function createQuickBooksMcpToolClient(options: { enablePosting?: boolean } = {}): McpToolClient {
   const serverPath = requiredPath('QBO_MCP_SERVER_PATH'), tokenStorePath = requiredPath('QBO_MCP_TOKEN_STORE_PATH')
+  const allowedTools = new Set(['search_vendors', 'search_purchase_orders', 'search_bills', ...(options.enablePosting ? ['create-bill'] : [])])
   const client = new MCPClient({ id: 'quickbooks-accounting', servers: { quickbooks: {
     command: process.execPath, args: [serverPath], env: {
-      QUICKBOOKS_TOKEN_STORE_PATH: tokenStorePath, QUICKBOOKS_DISABLE_WRITE: 'true', QUICKBOOKS_DISABLE_UPDATE: 'true', QUICKBOOKS_DISABLE_DELETE: 'true',
+      QUICKBOOKS_TOKEN_STORE_PATH: tokenStorePath, QUICKBOOKS_DISABLE_WRITE: options.enablePosting ? 'false' : 'true', QUICKBOOKS_DISABLE_UPDATE: 'true', QUICKBOOKS_DISABLE_DELETE: 'true',
     },
   } } })
-  return new MastraMcpToolClient(client, 'quickbooks')
+  return new MastraMcpToolClient(client, 'quickbooks', allowedTools)
 }
