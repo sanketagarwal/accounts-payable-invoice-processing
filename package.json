@@ -1,10 +1,16 @@
 {
   "name": "accounts-payable-invoice-processing",
   "version": "0.1.0",
+  "description": "A deterministic accounts-payable workflow with invoice extraction, vendor and PO controls, approval gates, monitoring, and optional QuickBooks posting.",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=22.13.0"
+  },
   "scripts": {
     "dev": "mastra dev",
+    "build": "mastra build",
+    "start": "mastra start",
     "typecheck": "tsc --noEmit",
     "test": "INVOICE_READER=fixture ACCOUNTING_PROVIDER=fixture SANCTIONS_SCREENING= QBO_MCP_ENABLE_POSTING=false MASTRA_OBSERVABILITY_DB_PATH=:memory: tsx src/scripts/test.ts",
     "fixtures:run": "INVOICE_READER=fixture tsx src/scripts/run-fixtures.ts",
