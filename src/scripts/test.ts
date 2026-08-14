@@ -34,6 +34,7 @@ import type { FinalAssessment } from '../mastra/phase2/schemas.ts'
 import { apExecutionWorkflow } from '../mastra/phase3/workflow.ts'
 import { buildApKpiReport } from '../mastra/monitoring/ap-kpi-report.ts'
 import { recordApKpi, type ApKpiEvent } from '../mastra/monitoring/ap-kpis.ts'
+import { buildExtractionReviewResult, buildSuspendedApprovalResult } from '../mastra/agents/invoice-chat-intake.ts'
 import { invoiceFixtures, runFixture } from './support.ts'
 
 for (const fixture of invoiceFixtures) {
@@ -318,6 +319,9 @@ assert.equal(flatSingleLineConfidenceState.decisions[0]!.outcome, 'pass')
 const missingLineConfidenceState = await makeVendorValidation(fixtureRuntime)({ ...normalized, confidence: indexedLineConfidence.filter(item => item.field !== 'lines[0].qty') })
 assert.equal(missingLineConfidenceState.decisions[0]!.outcome, 'verify_extraction')
 assert.deepEqual(missingLineConfidenceState.decisions[0]!.reasons[0]!.evidence?.missingConfidence, ['lines.0.qty'])
+const conflictingLineConfidenceState = await makeVendorValidation(fixtureRuntime)({ ...normalized, confidence: [...indexedLineConfidence, { field: 'lines.0.qty', confidence: 0.1 }] })
+assert.equal(conflictingLineConfidenceState.decisions[0]!.outcome, 'verify_extraction')
+assert.deepEqual(conflictingLineConfidenceState.decisions[0]!.reasons[0]!.evidence?.uncertainFields, ['lines.0.qty'])
 const optionalLowConfidenceState = await makeVendorValidation(fixtureRuntime)({ ...normalized, confidence: [...indexedLineConfidence, { field: 'vendorTaxId', confidence: 0.1 }] })
 assert.equal(optionalLowConfidenceState.decisions[0]!.outcome, 'pass')
 const unknownVendorState = await makeVendorValidation(fixtureRuntime)({ ...normalized, vendorName: 'Not A Sandbox Vendor LLC', vendorTaxId: null, confidence: flatSingleLineConfidence })
@@ -391,6 +395,15 @@ assert.equal(approved.disposition, 'approval_required')
 
 const approvalRun = await apExecutionWorkflow.createRun(), approvalStart = await approvalRun.start({ inputData: approved })
 assert.equal(approvalStart.status, 'suspended')
+if (approvalStart.status === 'suspended') {
+  const approvalSummary = buildSuspendedApprovalResult(approvalStart, approvalRun.runId)
+  assert.equal(approvalSummary.disposition, 'approval_required')
+  assert.ok(approvalSummary.reasonDetails.some(reason => reason.code === 'APPROVAL_THRESHOLD_EXCEEDED'))
+}
+const extractionReviewSummary = buildExtractionReviewResult(['invoiceNumber is required'])
+assert.equal(extractionReviewSummary.disposition, 'verify_extraction')
+assert.deepEqual(extractionReviewSummary.reviewTypes, ['verify_extraction'])
+assert.equal(extractionReviewSummary.reasonDetails[0]!.message, 'invoiceNumber is required')
 const freshApprovalHandle = await apExecutionWorkflow.createRun({ runId: approvalRun.runId })
 const approvedExecution = await freshApprovalHandle.resume({ step: 'approve-invoice', resumeData: { approved: true, comment: 'Reviewed' }, requestContext })
 assert.equal(approvedExecution.status, 'success')

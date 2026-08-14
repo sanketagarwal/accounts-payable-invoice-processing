@@ -12,10 +12,8 @@ const entries = (invoice: Phase2Invoice) => invoice.confidence.map(item => ({ ..
 export const confidenceFor = (invoice: Phase2Invoice, field: string) => {
   const canonical = canonicalConfidenceField(field)
   const values = entries(invoice)
-  const exact = values.find(item => item.field === canonical)
-  if (exact) return exact.confidence
-  if (canonical.startsWith('lines.')) return values.find(item => item.field === 'lines')?.confidence
-  return undefined
+  const candidates = values.filter(item => item.field === canonical || (canonical.startsWith('lines.') && item.field === 'lines'))
+  return candidates.length ? Math.min(...candidates.map(item => item.confidence)) : undefined
 }
 
 export const requiredConfidenceFields = (invoice: Phase2Invoice) => [

@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { ReviewerContextSchema } from '../schemas/invoice.ts'
 import { activePhase2Runtime } from '../phase2/composition.ts'
 import { verifyAssessment } from '../phase2/assessment-integrity.ts'
-import { FinalAssessmentSchema, Phase3ResultSchema, PostingRequestSchema, type ApprovalEvidence, type FinalAssessment, type Phase3Result } from '../phase2/schemas.ts'
+import { DecisionReasonSchema, FinalAssessmentSchema, Phase3ResultSchema, PostingRequestSchema, type ApprovalEvidence, type FinalAssessment, type Phase3Result } from '../phase2/schemas.ts'
 
 const approvalResumeSchema = z.object({ approved: z.boolean(), comment: z.string().trim().max(1000).optional() })
 const digest = (assessment: FinalAssessment) => createHash('sha256').update(JSON.stringify({ invoice: assessment.invoice, decisions: assessment.decisions, disposition: assessment.disposition, policy: assessment.policy })).digest('hex')
@@ -13,13 +13,21 @@ const result = (assessment: FinalAssessment, approval: ApprovalEvidence, executi
 
 const approve = createStep({
   id: 'approve-invoice', inputSchema: FinalAssessmentSchema, outputSchema: Phase3ResultSchema,
-  suspendSchema: z.object({ invoiceNumber: z.string(), vendorName: z.string(), currency: z.string(), totalMinor: z.number(), reasons: z.array(z.string()), invoiceDigest: z.string() }),
+  suspendSchema: z.object({
+    invoiceNumber: z.string(), vendorName: z.string(), currency: z.string(), totalMinor: z.number(), disposition: z.literal('approval_required'),
+    reasons: z.array(z.string()), reasonDetails: z.array(DecisionReasonSchema), reviewTypes: z.array(z.string()), signals: z.array(z.string()), adaptations: z.array(z.string()), invoiceDigest: z.string(),
+  }),
   resumeSchema: approvalResumeSchema, requestContextSchema: ReviewerContextSchema,
   execute: async ({ inputData, resumeData, requestContext, suspend }) => {
     if (!verifyAssessment(inputData)) throw new Error('Assessment provenance is invalid')
     if (inputData.disposition === 'auto_post') return result(inputData, evidence(inputData, { status: 'not_required', decidedAt: new Date().toISOString() }), 'ready_to_post')
     if (inputData.disposition !== 'approval_required') return result(inputData, evidence(inputData, {}), 'not_postable')
-    if (!resumeData) return await suspend({ invoiceNumber: inputData.invoice.invoiceNumber, vendorName: inputData.invoice.vendorName, currency: inputData.invoice.currency, totalMinor: inputData.invoice.totalMinor, reasons: inputData.decisions.flatMap(decision => decision.reasons.map(reason => reason.code)), invoiceDigest: digest(inputData) })
+    if (!resumeData) return await suspend({
+      invoiceNumber: inputData.invoice.invoiceNumber, vendorName: inputData.invoice.vendorName, currency: inputData.invoice.currency, totalMinor: inputData.invoice.totalMinor,
+      disposition: 'approval_required', reasons: inputData.decisions.flatMap(decision => decision.reasons.map(reason => reason.code)), reasonDetails: inputData.decisions.flatMap(decision => decision.reasons),
+      reviewTypes: inputData.decisions.flatMap(decision => decision.reviewType ? [decision.reviewType] : []), signals: inputData.decisions.flatMap(decision => decision.signals),
+      adaptations: inputData.decisions.flatMap(decision => decision.adaptations.map(adaptation => adaptation.code)), invoiceDigest: digest(inputData),
+    })
     const reviewerId = requestContext.get('reviewerId')
     if (!reviewerId) throw new Error('reviewerId must come from authenticated request context when resuming approval')
     const approval = evidence(inputData, { status: resumeData.approved ? 'approved' : 'rejected', reviewerId, decidedAt: new Date().toISOString(), comment: resumeData.comment ?? null })

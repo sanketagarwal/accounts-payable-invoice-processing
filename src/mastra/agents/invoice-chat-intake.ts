@@ -15,9 +15,25 @@ const toolResult = z.object({
   reasonDetails: z.array(z.object({ code: z.string(), message: z.string(), evidence: z.record(z.unknown()).optional() })).default([]),
   reviewTypes: z.array(z.string()), signals: z.array(z.string()), adaptations: z.array(z.string()), error: z.string().nullable(),
 })
+type ToolResult = z.infer<typeof toolResult>
+
+export const buildExtractionReviewResult = (issues: string[]): ToolResult => toolResult.parse({
+  status: 'needs_extraction_review', runId: null, executionStatus: null, disposition: 'verify_extraction', approvalPending: false,
+  reasons: ['EXTRACTION_VALIDATION_FAILED'], reasonDetails: issues.map(message => ({ code: 'EXTRACTION_VALIDATION_FAILED', message })),
+  reviewTypes: ['verify_extraction'], signals: [], adaptations: [], error: null,
+})
+
+export const buildSuspendedApprovalResult = (result: any, runId: string): ToolResult => {
+  const payload = Object.values(result.suspendPayload ?? {}).find((value: any) => value?.disposition === 'approval_required') as any
+  return toolResult.parse({
+    status: 'processed', runId, executionStatus: 'approval_required', disposition: 'approval_required', approvalPending: true,
+    reasons: payload?.reasons ?? [], reasonDetails: payload?.reasonDetails ?? [], reviewTypes: payload?.reviewTypes ?? [],
+    signals: payload?.signals ?? [], adaptations: payload?.adaptations ?? [], error: null,
+  })
+}
 
 const summarize = async (result: any, runId: string, approvalAttempt = false) => {
-  if (result.status === 'suspended') { const output = toolResult.parse({ status: 'processed', runId, executionStatus: 'approval_required', approvalPending: true, reasons: Object.values(result.suspendPayload ?? {}).flatMap((value: any) => value.reasons ?? []), reviewTypes: [], signals: [], adaptations: [], error: null }); await recordApKpi({ ...output, recordedAt: new Date().toISOString(), disposition: 'approval_required', postingStatus: null, integrationFailure: false, approvalState: 'pending' }); return output }
+  if (result.status === 'suspended') { const output = buildSuspendedApprovalResult(result, runId); await recordApKpi({ ...output, recordedAt: new Date().toISOString(), postingStatus: null, integrationFailure: false, approvalState: 'pending' }); return output }
   if (result.status !== 'success') { const output = toolResult.parse({ status: 'failed', runId, executionStatus: null, approvalPending: approvalAttempt, reasons: [], reviewTypes: [], signals: [], adaptations: [], error: `Workflow ended ${result.status}` }); await recordApKpi({ ...output, recordedAt: new Date().toISOString(), disposition: approvalAttempt ? 'approval_required' : null, postingStatus: null, integrationFailure: true, approvalState: approvalAttempt ? 'resume_failed' : 'not_applicable' }); return output }
   const decisions = result.result.decisions as Array<{ reasons: Array<{ code: string; message: string; evidence?: Record<string, unknown> }>; reviewType?: string | null; signals?: string[]; adaptations?: Array<{ code: string }> }>
   const reasonDetails = decisions.flatMap(decision => decision.reasons)
@@ -35,7 +51,7 @@ const submitInvoice = createTool({
     const requestContext = context?.requestContext as RequestContext<ReviewerContext> | undefined
     const candidate = { ...draft, source }
     const checked = validateExtraction(candidate)
-    if (!checked.extracted) { const output = toolResult.parse({ status: 'needs_extraction_review', runId: null, executionStatus: null, approvalPending: false, reasons: checked.issues, reviewTypes: [], signals: [], adaptations: [], error: null }); await recordApKpi({ ...output, runId: `extraction-${randomUUID()}`, recordedAt: new Date().toISOString(), disposition: 'verify_extraction', postingStatus: null, integrationFailure: false, approvalState: 'not_applicable' }); return output }
+    if (!checked.extracted) { const output = buildExtractionReviewResult(checked.issues); await recordApKpi({ ...output, runId: `extraction-${randomUUID()}`, recordedAt: new Date().toISOString(), postingStatus: null, integrationFailure: false, approvalState: 'not_applicable' }); return output }
     const document = { id: documentId, mimeType: source === 'PDF' ? 'application/pdf' : 'image/jpeg', source, sha256: undefined }
     const phase1 = { rawDocumentRef: document, extractedResult: checked.extracted, checks: { passed: true, issues: [] }, reviewerId: null, vendorId: null, poId: null, snapshot: { rawDocumentRef: document, extractedResult: checked.extracted } }
     const decisionRun = await apDecisionWorkflow.createRun()
