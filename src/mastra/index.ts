@@ -10,6 +10,8 @@ import { MastraStorageExporter, Observability } from '@mastra/observability'
 import { invoiceExtractionAgent } from './agents/invoice-extraction.ts'
 import { invoiceChatIntakeAgent } from './agents/invoice-chat-intake.ts'
 import { apAuth, setAuthenticatedReviewer } from './auth.ts'
+import { apDecisionWorkflow } from './phase2/workflow.ts'
+import { apExecutionWorkflow } from './phase3/workflow.ts'
 import { extractionFidelityScorer } from './scorers/extraction-fidelity.ts'
 import { invoiceReaderWorkflow } from './workflows/invoice-reader.ts'
 import { apInvoiceWorkflow } from './workflows/ap-invoice.ts'
@@ -27,7 +29,7 @@ const observabilityPath = process.env.MASTRA_OBSERVABILITY_DB_PATH?.trim() || re
 const observabilityStorage = new DuckDBStore({ id: 'ap-invoice-observability', path: observabilityPath, memoryLimit: '512MB' })
 const storage = new MastraCompositeStore({ id: 'ap-invoice-composite-storage', default: applicationStorage, domains: { observability: observabilityStorage.observability } })
 export const mastra = new Mastra({
-  agents: { invoiceChatIntakeAgent }, workflows: { apInvoiceWorkflow, invoiceReaderWorkflow }, scorers: { extractionFidelityScorer },
+  agents: { invoiceChatIntakeAgent }, workflows: { apInvoiceWorkflow, invoiceReaderWorkflow, apDecisionWorkflow, apExecutionWorkflow }, scorers: { extractionFidelityScorer },
   storage,
   observability: new Observability({ configs: { default: { serviceName: 'accounts-payable-invoice-processing', exporters: [new MastraStorageExporter()], logging: { enabled: true, level: 'info' } } } }),
   server: { auth: apAuth, middleware: [{ path: '/api/*', handler: async (context, next) => {

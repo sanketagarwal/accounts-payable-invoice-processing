@@ -44,6 +44,7 @@ for (const fixture of invoiceFixtures) {
 
 const cleanExtraction = invoiceFixtures[0]!.groundTruth
 assert.equal(validateExtraction({ ...cleanExtraction, vendorName: '   ' }).extracted, null)
+assert.equal(validateExtraction({ ...cleanExtraction, vendorTaxId: undefined }).extracted?.vendorTaxId, null)
 assert.ok(validateExtraction({ ...cleanExtraction, invoiceDate: '2026-02-30' }).issues.includes('invoiceDate must be yyyy-mm-dd'))
 assert.ok(validateExtraction({ ...cleanExtraction, subtotal: 99 }).issues.includes('line totals do not equal subtotal'))
 assert.ok(validateExtraction({ ...cleanExtraction, subtotal: null, tax: null, lines: [] }).issues.includes('total cannot be reconciled from printed amounts'))
@@ -160,6 +161,8 @@ const billPages: Record<number, unknown[]> = {
 const pageStarts: number[] = [], pagingClient: QboClient = { query: async <T>(_entity: string, query: string) => { const start = Number(query.match(/startposition (\d+)/i)?.[1]); pageStarts.push(start); return (billPages[start] ?? []) as T[] } }
 assert.equal((await new QuickBooksAdapter(pagingClient, 2).billHistorySeed()).length, 3)
 assert.deepEqual(pageStarts, [1, 3])
+const noDocNumberClient: QboClient = { query: async <T>() => [{ Id: 'qbo_unlabeled', VendorRef: { value: 'qbo_vendor_acme' }, TotalAmt: 50, TxnDate: '2026-01-01' }] as T[] }
+assert.deepEqual(await new QuickBooksAdapter(noDocNumberClient).billHistorySeed(), [])
 
 const mcpCalls: Array<{ tool: string; input: unknown }> = []
 const mcpResult = (...values: unknown[]) => ({ content: [{ type: 'text', text: `Found ${values.length} records:` }, ...values.map(value => ({ type: 'text', text: JSON.stringify(value) }))] })
@@ -177,6 +180,8 @@ const qboMcp = makeQuickBooksMcpProvider(qboMcpClient)
 assert.equal((await qboMcp.vendors!.find({ name: 'Acme Supplies' }))[0]!.id, 'qbo_vendor_acme')
 assert.equal((await qboMcp.purchaseOrders!.findByNumber('PO-1001'))[0]!.id, 'qbo_po_1001')
 assert.equal((await qboMcp.billHistorySeed!())[0]!.id, 'qbo_prior')
+const noDocNumberMcp: McpToolClient = { listToolNames: qboMcpClient.listToolNames, call: async () => mcpResult({ Id: 'qbo_unlabeled', VendorRef: { value: 'qbo_vendor_acme' }, TotalAmt: 50, TxnDate: '2026-01-01' }), disconnect: async () => undefined }
+assert.deepEqual(await makeQuickBooksMcpProvider(noDocNumberMcp).billHistorySeed!(), [])
 assert.deepEqual(mcpCalls.map(call => call.tool), ['search_vendors', 'search_purchase_orders', 'search_bills'])
 const incompleteMcp: McpToolClient = { listToolNames: async () => new Set(['search_vendors']), call: async () => mcpResult(), disconnect: async () => undefined }
 await assert.rejects(makeQuickBooksMcpProvider(incompleteMcp).vendors!.find({ name: 'Acme Supplies' }), ProviderUnavailableError)
@@ -268,10 +273,15 @@ assert.equal(compositeState.matchMode, 'three_way')
 assert.equal(compositeState.decisions.at(-1)!.sources.goodsReceipts, 'receiving')
 
 const fixtureRuntime = createPhase2Runtime({ provider: fixtureProvider, history: new InMemoryInvoiceHistoryRepository(), policy: new FixturePolicyProvider() })
+const lowConfidenceState = await makeVendorValidation(fixtureRuntime)({ ...normalized, confidence: [{ field: 'invoiceNumber', confidence: 0.2 }] })
+assert.equal(lowConfidenceState.decisions[0]!.outcome, 'verify_extraction')
+assert.equal(lowConfidenceState.decisions[0]!.reasons[0]!.code, 'LOW_EXTRACTION_CONFIDENCE')
 let lineMismatchState = await makeVendorValidation(fixtureRuntime)({ ...normalized, lines: [{ ...normalized.lines[0]!, qty: 5, unitPriceMinor: 2000 }] })
 lineMismatchState = await makeInvoiceMatch(fixtureRuntime)(lineMismatchState)
-assert.equal(lineMismatchState.decisions.at(-1)!.reviewType, 'po_mismatch')
+assert.equal(lineMismatchState.decisions.at(-1)!.reviewType, 'review_price_variance')
 assert.ok((lineMismatchState.decisions.at(-1)!.reasons[0]!.evidence?.mismatches as string[]).some(value => value.endsWith('.qty')))
+assert.ok(lineMismatchState.decisions.at(-1)!.reasons.some(reason => reason.code === 'PRICE_VARIANCE'))
+assert.ok(lineMismatchState.decisions.at(-1)!.reasons.some(reason => reason.code === 'QUANTITY_VARIANCE'))
 assert.equal((await makePolicyRouting(fixtureRuntime)(lineMismatchState)).disposition, 'review')
 
 let identityMismatchState = await makeVendorValidation(fixtureRuntime)({ ...normalized, vendorTaxId: 'US-99-9999999' })

@@ -15,7 +15,10 @@ const reconciles = (parts: Array<number | Decimal>, total: number, digits: numbe
 }
 
 export function validateExtraction(draft: InvoiceDraft): { extracted: ExtractedInvoice | null; issues: string[] } {
-  const parsed = ExtractedInvoiceSchema.safeParse(draft)
+  // A vendor tax ID is a useful identity signal when it is printed, but it is
+  // not required to create or match a QBO Bill. Models commonly omit optional
+  // fields instead of returning `null`, so normalize that omission explicitly.
+  const parsed = ExtractedInvoiceSchema.safeParse({ ...draft, vendorTaxId: draft.vendorTaxId ?? null })
   if (!parsed.success) return { extracted: null, issues: parsed.error.issues.map(issue => `${issue.path.join('.') || 'invoice'}: ${issue.message}`) }
   const invoice = parsed.data, currency = currencyCode(invoice.currency), overrideDigits = currentCurrencyOverrides.get(invoice.currency)
   const validCurrency = overrideDigits !== undefined || currency?.code === invoice.currency

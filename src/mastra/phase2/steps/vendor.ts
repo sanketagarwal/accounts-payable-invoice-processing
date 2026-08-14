@@ -10,6 +10,12 @@ export function makeVendorValidation(runtime: Phase2Runtime) {
   const provider = runtime.provider, sources = runtimeSources(runtime)
   return async (invoice: Phase2Invoice) => {
     const state = initial(invoice), adaptations: StepDecision['adaptations'] = [], signals: string[] = []
+    const policy = await runtime.policy.getPolicy()
+    const uncertainFields = invoice.confidence.filter(item => item.confidence < policy.lowConfidenceThreshold).map(item => item.field)
+    if (uncertainFields.length) {
+      state.decisions.push({ step: 'extraction', outcome: 'verify_extraction', reviewType: null, reasons: [{ code: 'LOW_EXTRACTION_CONFIDENCE', message: 'Document extraction requires human verification before financial controls run', evidence: { overallConfidence: invoice.overallConfidence, uncertainFields } }], signals: ['low_extraction_confidence'], adaptations, sources: {} })
+      return AssessmentStateSchema.parse(state)
+    }
     if (!provider.capabilities.vendorBankDetails) { adaptations.push({ code: 'VENDOR_BANK_DETAILS_UNAVAILABLE', providerId: sources.vendors }); signals.push('payment_details_unverifiable') }
     if (provider.capabilities.vendorStatusRichness === 'binary') adaptations.push({ code: 'VENDOR_STATUS_BINARY', providerId: sources.vendors })
     if (runtime.sanctionsIsFallback) adaptations.push({ code: 'SANCTIONS_SOURCE_FALLBACK', providerId: sources.sanctions })
@@ -34,7 +40,7 @@ export function makeVendorValidation(runtime: Phase2Runtime) {
         return AssessmentStateSchema.parse(state)
       }
       if (mismatchReason) {
-        const policy = await runtime.policy.getPolicy(), uncertain = invoice.confidence.some(item => item.field === 'vendorTaxId' && item.confidence < policy.lowConfidenceThreshold)
+        const uncertain = invoice.confidence.some(item => item.field === 'vendorTaxId' && item.confidence < policy.lowConfidenceThreshold)
         state.decisions.push({ step: 'vendor', outcome: uncertain ? 'verify_extraction' : 'review', reviewType: uncertain ? null : 'vendor_identity_mismatch', reasons: [mismatchReason], signals, adaptations, sources: { vendors: sources.vendors, sanctions: sources.sanctions } })
         return AssessmentStateSchema.parse(state)
       }

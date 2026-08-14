@@ -11,6 +11,10 @@ export interface QboClient { query<T>(entity: string, query: string): Promise<T[
 export class QboUnavailableError extends ProviderUnavailableError { constructor(operation: string, cause?: unknown) { super('quickbooks', operation, { cause }); this.name = 'QboUnavailableError' } }
 const quote = (value: string) => value.replaceAll("'", "\\'")
 const required = (value: string | undefined, field: string) => { if (!value) throw new Error(`QuickBooks ${field} missing`); return value }
+// QBO permits bills without a supplier invoice number (DocNumber). They cannot
+// participate in an invoice-number duplicate check, so ignore them rather than
+// failing every AP run while loading history.
+export const hasQboInvoiceNumber = (row: QboBill) => Boolean(row.DocNumber?.trim())
 
 export const mapQboVendor = (row: QboVendor) => VendorRecordSchema.parse({ id: required(row.Id, 'Vendor.Id'), name: required(row.DisplayName, 'Vendor.DisplayName'), taxId: row.TaxIdentifier ?? null, status: row.Active === false ? 'inactive' : 'approved', bankDetailsFingerprint: null })
 export const mapQboPurchaseOrder = (row: QboPurchaseOrder) => {
@@ -52,6 +56,6 @@ export class QuickBooksAdapter implements VendorRepository, PurchaseOrderReposit
       const page = await this.client.query<QboBill>('Bill', `select * from Bill startposition ${start} maxresults ${this.billPageSize}`)
       rows.push(...page); if (page.length < this.billPageSize) break
     }
-    return rows.map(mapQboBill)
+    return rows.filter(hasQboInvoiceNumber).map(mapQboBill)
   }
 }

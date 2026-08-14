@@ -4,6 +4,16 @@ import { ProviderUnavailableError, ReferenceCrosswalkError } from '../ports.ts'
 import { AssessmentStateSchema, type AssessmentState, type PurchaseOrder, type StepDecision } from '../schemas.ts'
 
 const lowConfidence = (state: AssessmentState, fields: string[], threshold: number) => state.invoice.confidence.some(item => fields.includes(item.field) && item.confidence < threshold)
+const mismatchReasons = (mismatches: string[]) => [
+  { code: 'PO_MISMATCH', message: 'Invoice does not match the purchase order', evidence: { mismatches } },
+  ...(mismatches.some(mismatch => mismatch.endsWith('.unitPrice')) ? [{ code: 'PRICE_VARIANCE', message: 'One or more invoice unit prices exceed the PO tolerance', evidence: { mismatches: mismatches.filter(mismatch => mismatch.endsWith('.unitPrice')) } }] : []),
+  ...(mismatches.some(mismatch => mismatch.endsWith('.qty')) ? [{ code: 'QUANTITY_VARIANCE', message: 'One or more invoice quantities differ from the PO', evidence: { mismatches: mismatches.filter(mismatch => mismatch.endsWith('.qty')) } }] : []),
+  ...(mismatches.some(mismatch => mismatch.endsWith('.missing') || mismatch === 'lines.uninvoicedPoLines') ? [{ code: 'LINE_ITEM_VARIANCE', message: 'Invoice and PO line items differ', evidence: { mismatches: mismatches.filter(mismatch => mismatch.endsWith('.missing') || mismatch === 'lines.uninvoicedPoLines') } }] : []),
+  ...(mismatches.includes('total') ? [{ code: 'TOTAL_VARIANCE', message: 'Invoice total differs from the PO beyond tolerance', evidence: { mismatches: ['total'] } }] : []),
+  ...(mismatches.includes('currency') ? [{ code: 'CURRENCY_MISMATCH', message: 'Invoice and PO currencies differ', evidence: { mismatches: ['currency'] } }] : []),
+  ...(mismatches.includes('vendor') ? [{ code: 'PO_VENDOR_MISMATCH', message: 'Purchase order belongs to a different vendor', evidence: { mismatches: ['vendor'] } }] : []),
+]
+const reviewTypeFor = (mismatches: string[]) => mismatches.some(mismatch => mismatch.endsWith('.unitPrice')) ? 'review_price_variance' : mismatches.some(mismatch => mismatch.endsWith('.qty')) ? 'review_quantity_variance' : mismatches.some(mismatch => mismatch.endsWith('.missing') || mismatch === 'lines.uninvoicedPoLines') ? 'review_line_item_variance' : mismatches.includes('currency') ? 'review_currency_mismatch' : 'po_mismatch'
 const lineMismatches = (state: AssessmentState, po: PurchaseOrder, tolerance: number) => {
   const available = new Set(po.lines.map((_, index) => index)), mismatches: string[] = []
   state.invoice.lines.forEach((line, invoiceIndex) => {
@@ -38,7 +48,7 @@ export function makeInvoiceMatch(runtime: Phase2Runtime) {
       ]
       if (mismatches.length) {
         const verify = lowConfidence(state, ['vendorName', 'poNumber', 'currency', 'total', 'lines', 'sku', 'qty', 'unitPrice', 'lineTotal'], policy.lowConfidenceThreshold)
-        state.decisions.push({ step: 'match', outcome: verify ? 'verify_extraction' : 'review', reviewType: verify ? null : 'po_mismatch', reasons: [{ code: 'PO_MISMATCH', message: 'Invoice does not match the purchase order', evidence: { mismatches } }], signals: [], adaptations, sources: { purchaseOrders: sources.purchaseOrders } }); return AssessmentStateSchema.parse(state)
+        state.decisions.push({ step: 'match', outcome: verify ? 'verify_extraction' : 'review', reviewType: verify ? null : reviewTypeFor(mismatches), reasons: mismatchReasons(mismatches), signals: [], adaptations, sources: { purchaseOrders: sources.purchaseOrders } }); return AssessmentStateSchema.parse(state)
       }
       if (!provider.goodsReceipts) {
         state.matchMode = 'two_way'; adaptations.push({ code: 'GOODS_RECEIPTS_UNAVAILABLE', providerId: provider.id })

@@ -6,16 +6,20 @@ import { apDecisionWorkflow } from '../phase2/workflow.ts'
 import { apExecutionWorkflow } from '../phase3/workflow.ts'
 import { InvoiceDraftSchema, type ReviewerContext } from '../schemas/invoice.ts'
 import { validateExtraction } from '../validation/extraction-checks.ts'
+import { recordApKpi } from '../monitoring/ap-kpis.ts'
 
 const toolResult = z.object({
   status: z.enum(['processed', 'needs_extraction_review', 'failed']), runId: z.string().nullable(), executionStatus: z.string().nullable(),
-  approvalPending: z.boolean(), reasons: z.array(z.string()), error: z.string().nullable(),
+  approvalPending: z.boolean(), reasons: z.array(z.string()), reviewTypes: z.array(z.string()), signals: z.array(z.string()), adaptations: z.array(z.string()), error: z.string().nullable(),
 })
 
-const summarize = (result: any, runId: string) => {
-  if (result.status === 'suspended') return toolResult.parse({ status: 'processed', runId, executionStatus: 'approval_required', approvalPending: true, reasons: Object.values(result.suspendPayload ?? {}).flatMap((value: any) => value.reasons ?? []), error: null })
-  if (result.status !== 'success') return toolResult.parse({ status: 'failed', runId, executionStatus: null, approvalPending: false, reasons: [], error: `Workflow ended ${result.status}` })
-  return toolResult.parse({ status: 'processed', runId, executionStatus: result.result.executionStatus, approvalPending: false, reasons: result.result.decisions.flatMap((decision: { reasons: Array<{ code: string }> }) => decision.reasons.map(reason => reason.code)), error: result.result.postingError })
+const summarize = async (result: any, runId: string) => {
+  if (result.status === 'suspended') { const output = toolResult.parse({ status: 'processed', runId, executionStatus: 'approval_required', approvalPending: true, reasons: Object.values(result.suspendPayload ?? {}).flatMap((value: any) => value.reasons ?? []), reviewTypes: [], signals: [], adaptations: [], error: null }); await recordApKpi({ ...output, recordedAt: new Date().toISOString(), disposition: 'approval_required', postingStatus: null, integrationFailure: false }); return output }
+  if (result.status !== 'success') { const output = toolResult.parse({ status: 'failed', runId, executionStatus: null, approvalPending: false, reasons: [], reviewTypes: [], signals: [], adaptations: [], error: `Workflow ended ${result.status}` }); await recordApKpi({ ...output, recordedAt: new Date().toISOString(), disposition: null, postingStatus: null, integrationFailure: true }); return output }
+  const decisions = result.result.decisions as Array<{ reasons: Array<{ code: string }>; reviewType?: string | null; signals?: string[]; adaptations?: Array<{ code: string }> }>
+  const output = toolResult.parse({ status: 'processed', runId, executionStatus: result.result.executionStatus, approvalPending: false, reasons: decisions.flatMap(decision => decision.reasons.map(reason => reason.code)), reviewTypes: decisions.flatMap(decision => decision.reviewType ? [decision.reviewType] : []), signals: decisions.flatMap(decision => decision.signals ?? []), adaptations: decisions.flatMap(decision => decision.adaptations?.map(adaptation => adaptation.code) ?? []), error: result.result.postingError })
+  await recordApKpi({ ...output, recordedAt: new Date().toISOString(), disposition: result.result.disposition, postingStatus: result.result.posting?.status ?? null, integrationFailure: Boolean(result.result.postingError) || output.executionStatus === 'posting_failed' || output.executionStatus === 'posting_unavailable' })
+  return output
 }
 
 const submitInvoice = createTool({
@@ -26,7 +30,7 @@ const submitInvoice = createTool({
     const requestContext = context?.requestContext as RequestContext<ReviewerContext> | undefined
     const candidate = { ...draft, source }
     const checked = validateExtraction(candidate)
-    if (!checked.extracted) return toolResult.parse({ status: 'needs_extraction_review', runId: null, executionStatus: null, approvalPending: false, reasons: checked.issues, error: null })
+    if (!checked.extracted) return toolResult.parse({ status: 'needs_extraction_review', runId: null, executionStatus: null, approvalPending: false, reasons: checked.issues, reviewTypes: [], signals: [], adaptations: [], error: null })
     const document = { id: documentId, mimeType: source === 'PDF' ? 'application/pdf' : 'image/jpeg', source, sha256: undefined }
     const phase1 = { rawDocumentRef: document, extractedResult: checked.extracted, checks: { passed: true, issues: [] }, reviewerId: null, vendorId: null, poId: null, snapshot: { rawDocumentRef: document, extractedResult: checked.extracted } }
     const decisionRun = await apDecisionWorkflow.createRun()
@@ -34,7 +38,7 @@ const submitInvoice = createTool({
     if (decision.status !== 'success') return toolResult.parse({ status: 'failed', runId: decisionRun.runId, executionStatus: null, approvalPending: false, reasons: [], error: `Decision workflow ended ${decision.status}` })
     const executionRun = await apExecutionWorkflow.createRun()
     const execution = await executionRun.start({ inputData: decision.result, requestContext })
-    return summarize(execution, executionRun.runId)
+    return await summarize(execution, executionRun.runId)
   },
 })
 
@@ -45,12 +49,14 @@ const resumeApproval = createTool({
     const requestContext = context?.requestContext as RequestContext<ReviewerContext> | undefined
     const run = await apExecutionWorkflow.createRun({ runId })
     const result = await run.resume({ step: 'approve-invoice', resumeData: { approved, comment }, requestContext })
-    return summarize(result, runId)
+    return await summarize(result, runId)
   },
 })
 
 export const invoiceChatIntakeAgent = new Agent({
   id: 'invoice-chat-intake-agent', name: 'Invoice chat intake agent', model: process.env.INVOICE_READER_MODEL ?? 'openai/gpt-5.6-sol',
-  instructions: `Process one invoice attachment at a time. Read only values visibly printed on the attached PDF, PNG, or JPEG; use null or omit fields that are unreadable. Then call submit-invoice-for-processing exactly once with the extracted draft. Never invent vendor IDs, PO IDs, accounting IDs, or values. Report the returned disposition plainly. If it reports approvalPending, present the runId and wait for an authenticated reviewer to explicitly approve or reject it; only then call resolve-invoice-approval.`,
+  instructions: `An explicit approval or rejection for an existing run takes priority over invoice intake. If the user says approve or reject and supplies a run ID, do not request an attachment: call resolve-invoice-approval exactly once with that run ID, approved true for approval or false for rejection, and the supplied comment if any. That action requires an authenticated reviewer but no invoice attachment.
+
+Otherwise, process one invoice attachment at a time. Read only values visibly printed on the attached PDF, PNG, or JPEG; use null or omit fields that are unreadable. Always include an honest overallConfidence and field-level confidence entries. A missing PDF text layer alone is not low confidence: judge the visible rendered page. Use low confidence (below 0.8) only for fields that are visually degraded, such as blur, noise, skew, cropping, occlusion, or ambiguous/unreadable characters. Then call submit-invoice-for-processing exactly once with the extracted draft. Never invent vendor IDs, PO IDs, accounting IDs, or values. Report only dispositions, reasons, and adaptations returned by the tool; do not invent an adaptation. If it reports approvalPending, present the runId and wait for an authenticated reviewer to explicitly approve or reject it; only then call resolve-invoice-approval.`,
   tools: { submitInvoice, resumeApproval },
 })

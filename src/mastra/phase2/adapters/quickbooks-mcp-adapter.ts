@@ -2,7 +2,7 @@ import { z } from 'zod'
 import Decimal from 'decimal.js'
 import { PostingConflictError, ProviderUnavailableError, type PostingAdapter, type PurchaseOrderRepository, type VendorLookup, type VendorRepository } from '../ports.ts'
 import { PostingReceiptSchema, PostingRequestSchema, type PostingRequest } from '../schemas.ts'
-import { mapQboBill, mapQboPurchaseOrder, mapQboVendor, type QboBill, type QboPurchaseOrder, type QboVendor } from './quickbooks-adapter.ts'
+import { hasQboInvoiceNumber, mapQboBill, mapQboPurchaseOrder, mapQboVendor, type QboBill, type QboPurchaseOrder, type QboVendor } from './quickbooks-adapter.ts'
 import type { McpToolClient } from './mcp-tool-client.ts'
 
 const requiredTools = ['search_vendors', 'search_purchase_orders', 'search_bills'] as const
@@ -45,7 +45,7 @@ export class QuickBooksMcpAdapter implements VendorRepository, PurchaseOrderRepo
     if (!matches.length && rows.length === this.poLimit) throw new ProviderUnavailableError('quickbooks-mcp', 'search_purchase_orders result window exhausted')
     return matches.map(row => mapQboPurchaseOrder(row as QboPurchaseOrder))
   }
-  async billHistorySeed() { return (await this.call('search_bills', { fetchAll: true })).map(row => mapQboBill(row as QboBill)) }
+  async billHistorySeed() { return (await this.call('search_bills', { fetchAll: true })).filter(row => hasQboInvoiceNumber(row as QboBill)).map(row => mapQboBill(row as QboBill)) }
   async postBill(input: PostingRequest) {
     if (!this.postingConfig) throw new Error('QuickBooks MCP posting is disabled')
     input = PostingRequestSchema.parse(input)

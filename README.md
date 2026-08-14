@@ -34,7 +34,7 @@ Open the URL printed by `mastra dev`, select `apInvoiceWorkflow`, and start it w
 }
 ```
 
-The workflow uses local fixtures by default, so this path needs no model or accounting-system credentials. Select `invoiceReaderWorkflow` to inspect Phase 1 alone. The decision and execution workflows are intentionally exposed only through `apInvoiceWorkflow`, so Studio cannot bypass the trusted reader boundary.
+The workflow uses local fixtures by default, so this path needs no model or accounting-system credentials. Select `invoiceReaderWorkflow` to inspect Phase 1 alone. The decision and execution workflows are registered for durable suspension/resume; use the chat intake agent or `apInvoiceWorkflow` for the complete trusted-document path.
 
 Studio protects its API with the local `SimpleAuth` credentials in `.env.example`. Sign in with any email and use `MASTRA_AUTH_TOKEN` as the password. The example token is for localhost only; production startup requires explicit credentials, and a deployed template should replace `SimpleAuth` with its JWT/SSO provider.
 
@@ -162,6 +162,18 @@ await run.resume({
 ```
 
 A rejection finishes without writing. Review, blocked, retry, and extraction-verification outcomes are never postable. The final result records `executionStatus`, immutable approval evidence, and the external bill receipt or a visible posting error.
+
+#### Approving from Mastra Studio
+
+When an invoice is over the policy threshold, the chat intake agent returns `approval required` and a run ID. Approval is performed in Mastra, not in QuickBooks. Because the starter chat agent does not retain prior message context, put the approval decision and run ID in **one message**:
+
+```text
+Approve invoice run <RUN_ID>. Comment: Approved for AP test.
+```
+
+For a rejection, use `Reject invoice run <RUN_ID>. Comment: <reason>.` The authenticated reviewer identity is captured with the decision. On approval, the workflow resumes and posts the Bill; on rejection, it ends without creating one.
+
+To verify a successful post in the QuickBooks sandbox, open **Expenses & bills → Bills** and search by the supplier invoice number (`DocNumber`). In older navigation, open **Expenses → Vendors → <vendor> → Transactions**. Bills are AP transactions and will not appear under **Sales → Invoices**.
 
 ### Compose multiple systems
 
