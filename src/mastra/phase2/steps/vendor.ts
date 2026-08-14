@@ -11,9 +11,11 @@ export function makeVendorValidation(runtime: Phase2Runtime) {
   return async (invoice: Phase2Invoice) => {
     const state = initial(invoice), adaptations: StepDecision['adaptations'] = [], signals: string[] = []
     const policy = await runtime.policy.getPolicy()
+    const requiredConfidence = ['invoiceNumber', 'vendorName', 'poNumber', 'invoiceDate', 'currency', 'subtotal', 'tax', 'total', 'lines']
     const uncertainFields = invoice.confidence.filter(item => item.confidence < policy.lowConfidenceThreshold).map(item => item.field)
-    if (uncertainFields.length) {
-      state.decisions.push({ step: 'extraction', outcome: 'verify_extraction', reviewType: null, reasons: [{ code: 'LOW_EXTRACTION_CONFIDENCE', message: 'Document extraction requires human verification before financial controls run', evidence: { overallConfidence: invoice.overallConfidence, uncertainFields } }], signals: ['low_extraction_confidence'], adaptations, sources: {} })
+    const missingConfidence = requiredConfidence.filter(field => !invoice.confidence.some(item => item.field === field))
+    if (invoice.overallConfidence < policy.lowConfidenceThreshold || uncertainFields.length || missingConfidence.length) {
+      state.decisions.push({ step: 'extraction', outcome: 'verify_extraction', reviewType: null, reasons: [{ code: 'LOW_EXTRACTION_CONFIDENCE', message: 'Document extraction requires human verification before financial controls run', evidence: { overallConfidence: invoice.overallConfidence, uncertainFields, missingConfidence } }], signals: ['low_extraction_confidence'], adaptations, sources: {} })
       return AssessmentStateSchema.parse(state)
     }
     if (!provider.capabilities.vendorBankDetails) { adaptations.push({ code: 'VENDOR_BANK_DETAILS_UNAVAILABLE', providerId: sources.vendors }); signals.push('payment_details_unverifiable') }

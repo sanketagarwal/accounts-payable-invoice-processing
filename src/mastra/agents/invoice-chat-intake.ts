@@ -1,4 +1,5 @@
 import { Agent } from '@mastra/core/agent'
+import { randomUUID } from 'node:crypto'
 import type { RequestContext } from '@mastra/core/request-context'
 import { createTool } from '@mastra/core/tools'
 import { z } from 'zod'
@@ -13,12 +14,13 @@ const toolResult = z.object({
   approvalPending: z.boolean(), reasons: z.array(z.string()), reviewTypes: z.array(z.string()), signals: z.array(z.string()), adaptations: z.array(z.string()), error: z.string().nullable(),
 })
 
-const summarize = async (result: any, runId: string) => {
-  if (result.status === 'suspended') { const output = toolResult.parse({ status: 'processed', runId, executionStatus: 'approval_required', approvalPending: true, reasons: Object.values(result.suspendPayload ?? {}).flatMap((value: any) => value.reasons ?? []), reviewTypes: [], signals: [], adaptations: [], error: null }); await recordApKpi({ ...output, recordedAt: new Date().toISOString(), disposition: 'approval_required', postingStatus: null, integrationFailure: false }); return output }
-  if (result.status !== 'success') { const output = toolResult.parse({ status: 'failed', runId, executionStatus: null, approvalPending: false, reasons: [], reviewTypes: [], signals: [], adaptations: [], error: `Workflow ended ${result.status}` }); await recordApKpi({ ...output, recordedAt: new Date().toISOString(), disposition: null, postingStatus: null, integrationFailure: true }); return output }
+const summarize = async (result: any, runId: string, approvalAttempt = false) => {
+  if (result.status === 'suspended') { const output = toolResult.parse({ status: 'processed', runId, executionStatus: 'approval_required', approvalPending: true, reasons: Object.values(result.suspendPayload ?? {}).flatMap((value: any) => value.reasons ?? []), reviewTypes: [], signals: [], adaptations: [], error: null }); await recordApKpi({ ...output, recordedAt: new Date().toISOString(), disposition: 'approval_required', postingStatus: null, integrationFailure: false, approvalState: 'pending' }); return output }
+  if (result.status !== 'success') { const output = toolResult.parse({ status: 'failed', runId, executionStatus: null, approvalPending: approvalAttempt, reasons: [], reviewTypes: [], signals: [], adaptations: [], error: `Workflow ended ${result.status}` }); await recordApKpi({ ...output, recordedAt: new Date().toISOString(), disposition: approvalAttempt ? 'approval_required' : null, postingStatus: null, integrationFailure: true, approvalState: approvalAttempt ? 'resume_failed' : 'not_applicable' }); return output }
   const decisions = result.result.decisions as Array<{ reasons: Array<{ code: string }>; reviewType?: string | null; signals?: string[]; adaptations?: Array<{ code: string }> }>
   const output = toolResult.parse({ status: 'processed', runId, executionStatus: result.result.executionStatus, approvalPending: false, reasons: decisions.flatMap(decision => decision.reasons.map(reason => reason.code)), reviewTypes: decisions.flatMap(decision => decision.reviewType ? [decision.reviewType] : []), signals: decisions.flatMap(decision => decision.signals ?? []), adaptations: decisions.flatMap(decision => decision.adaptations?.map(adaptation => adaptation.code) ?? []), error: result.result.postingError })
-  await recordApKpi({ ...output, recordedAt: new Date().toISOString(), disposition: result.result.disposition, postingStatus: result.result.posting?.status ?? null, integrationFailure: Boolean(result.result.postingError) || output.executionStatus === 'posting_failed' || output.executionStatus === 'posting_unavailable' })
+  const approvalState = result.result.approval?.status === 'approved' ? 'approved' : result.result.approval?.status === 'rejected' ? 'rejected' : 'not_applicable'
+  await recordApKpi({ ...output, recordedAt: new Date().toISOString(), disposition: result.result.disposition, postingStatus: result.result.posting?.status ?? null, integrationFailure: Boolean(result.result.postingError) || output.executionStatus === 'posting_failed' || output.executionStatus === 'posting_unavailable', approvalState })
   return output
 }
 
@@ -30,12 +32,12 @@ const submitInvoice = createTool({
     const requestContext = context?.requestContext as RequestContext<ReviewerContext> | undefined
     const candidate = { ...draft, source }
     const checked = validateExtraction(candidate)
-    if (!checked.extracted) return toolResult.parse({ status: 'needs_extraction_review', runId: null, executionStatus: null, approvalPending: false, reasons: checked.issues, reviewTypes: [], signals: [], adaptations: [], error: null })
+    if (!checked.extracted) { const output = toolResult.parse({ status: 'needs_extraction_review', runId: null, executionStatus: null, approvalPending: false, reasons: checked.issues, reviewTypes: [], signals: [], adaptations: [], error: null }); await recordApKpi({ ...output, runId: `extraction-${randomUUID()}`, recordedAt: new Date().toISOString(), disposition: 'verify_extraction', postingStatus: null, integrationFailure: false, approvalState: 'not_applicable' }); return output }
     const document = { id: documentId, mimeType: source === 'PDF' ? 'application/pdf' : 'image/jpeg', source, sha256: undefined }
     const phase1 = { rawDocumentRef: document, extractedResult: checked.extracted, checks: { passed: true, issues: [] }, reviewerId: null, vendorId: null, poId: null, snapshot: { rawDocumentRef: document, extractedResult: checked.extracted } }
     const decisionRun = await apDecisionWorkflow.createRun()
     const decision = await decisionRun.start({ inputData: phase1 })
-    if (decision.status !== 'success') return toolResult.parse({ status: 'failed', runId: decisionRun.runId, executionStatus: null, approvalPending: false, reasons: [], error: `Decision workflow ended ${decision.status}` })
+    if (decision.status !== 'success') { const output = toolResult.parse({ status: 'failed', runId: decisionRun.runId, executionStatus: null, approvalPending: false, reasons: [], reviewTypes: [], signals: [], adaptations: [], error: `Decision workflow ended ${decision.status}` }); await recordApKpi({ ...output, recordedAt: new Date().toISOString(), disposition: null, postingStatus: null, integrationFailure: true, approvalState: 'not_applicable' }); return output }
     const executionRun = await apExecutionWorkflow.createRun()
     const execution = await executionRun.start({ inputData: decision.result, requestContext })
     return await summarize(execution, executionRun.runId)
@@ -49,7 +51,7 @@ const resumeApproval = createTool({
     const requestContext = context?.requestContext as RequestContext<ReviewerContext> | undefined
     const run = await apExecutionWorkflow.createRun({ runId })
     const result = await run.resume({ step: 'approve-invoice', resumeData: { approved, comment }, requestContext })
-    return await summarize(result, runId)
+    return await summarize(result, runId, true)
   },
 })
 

@@ -14,7 +14,7 @@ export function makeDuplicateDetection(runtime: Phase2Runtime) {
     try {
       await runtime.seedHistory()
       const candidates = await runtime.history.findPotentialDuplicates({ vendorId: state.vendor.id, invoiceNumber: state.invoice.invoiceNumber, currency: state.invoice.currency, totalMinor: state.invoice.totalMinor })
-      const duplicates = candidates.filter(candidate => candidate.invoiceNumber.trim().toLowerCase() === state.invoice.invoiceNumber.trim().toLowerCase() || (candidate.currency === state.invoice.currency && candidate.totalMinor === state.invoice.totalMinor && days(candidate.invoiceDate, state.invoice.invoiceDate) <= 7))
+      const duplicates = candidates.filter(candidate => candidate.invoiceNumber?.trim().toLowerCase() === state.invoice.invoiceNumber.trim().toLowerCase() || (candidate.currency === state.invoice.currency && candidate.totalMinor === state.invoice.totalMinor && days(candidate.invoiceDate, state.invoice.invoiceDate) <= 7))
       state.duplicateIds = duplicates.map(invoice => invoice.id)
       state.decisions.push({ step: 'dedup', outcome: duplicates.length ? 'review' : 'pass', reviewType: duplicates.length ? 'possible_duplicate' : null, reasons: [{ code: duplicates.length ? 'POSSIBLE_DUPLICATE' : 'NO_DUPLICATE', message: duplicates.length ? 'Potential prior invoice found' : 'No duplicate invoice found', evidence: { invoiceIds: state.duplicateIds } }], signals: duplicates.length ? ['possible_duplicate'] : [], adaptations, sources: { billHistory: sources.billHistory } })
       return AssessmentStateSchema.parse(state)

@@ -81,7 +81,7 @@ Expected: `approval_required`; approve to post, reject to finish without a QBO B
 
 Use the same financial data as case 1, but make a visibly degraded scan: skewed, low resolution, partly obscured labels, or unusual table columns.
 
-Expected: only `verify_extraction` if the reader produces a deterministic extraction inconsistency. Low confidence alone is currently recorded but does **not** itself route to verification.
+Expected: `verify_extraction` when the reader reports low overall confidence, low confidence for a required field, or omits a required confidence entry. This is a human extraction check, not a vendor, PO, or duplicate error.
 
 ### 4. Missing required field
 

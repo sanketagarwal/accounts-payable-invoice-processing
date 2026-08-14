@@ -34,7 +34,7 @@ Open the URL printed by `mastra dev`, select `apInvoiceWorkflow`, and start it w
 }
 ```
 
-The workflow uses local fixtures by default, so this path needs no model or accounting-system credentials. Select `invoiceReaderWorkflow` to inspect Phase 1 alone. The decision and execution workflows are registered for durable suspension/resume; use the chat intake agent or `apInvoiceWorkflow` for the complete trusted-document path.
+The workflow uses local fixtures by default, so this path needs no model or accounting-system credentials. Select `invoiceReaderWorkflow` to inspect Phase 1 alone. The intermediate decision workflow is internal; it is not registered as a directly startable Studio/API workflow. The execution workflow is registered only so approval snapshots can be resumed, and it accepts assessments signed by the deterministic decision workflow. Use the chat intake agent or `apInvoiceWorkflow` for the complete trusted-document path. Set a random, server-only `AP_ASSESSMENT_SIGNING_KEY` of at least 32 characters in every non-local deployment (for example, generate one with `openssl rand -hex 32`). It must be independent of `MASTRA_AUTH_TOKEN`, which Studio/API users may know; assessment signing refuses to run in production or with QuickBooks posting enabled when the dedicated key is absent, too short, or the documented placeholder.
 
 Studio protects its API with the local `SimpleAuth` credentials in `.env.example`. Sign in with any email and use `MASTRA_AUTH_TOKEN` as the password. The example token is for localhost only; production startup requires explicit credentials, and a deployed template should replace `SimpleAuth` with its JWT/SSO provider.
 
@@ -53,7 +53,7 @@ npm run invoice:run -- path/to/invoice.pdf
 The vision reader accepts PDF, PNG, and JPEG files inside `INVOICE_ROOT`, checks file size before reading, verifies magic bytes and checksum, then sends those exact bytes as a multimodal file part. Use a provider/model that supports the document MIME type. The reader never returns ERP IDs, and document source metadata comes from the trusted input rather than the model.
 
 Phase 1 checks dates, currencies, required fields, and printed-amount arithmetic. Model confidence is retained for monitoring and extraction-error routing, but never decides whether financial data is valid.
-The workflow only suspends when deterministic reader-integrity checks fail: canonical date, ISO-4217 currency, required values, currency-aware printed-amount arithmetic, or subtotal/line reconciliation. Extended line totals and invoice totals must use the currency's minor-unit precision; unit prices may retain legitimate sub-minor precision and are checked through rounded line reconciliation. Model confidence remains in the result for monitoring but never controls the gate.
+The reader workflow suspends when deterministic integrity checks fail: canonical date, ISO-4217 currency, required values, currency-aware printed-amount arithmetic, or subtotal/line reconciliation. Extended line totals and invoice totals must use the currency's minor-unit precision; unit prices may retain legitimate sub-minor precision and are checked through rounded line reconciliation. The AP decision workflow also routes to `verify_extraction` when overall confidence is low, a required field confidence is low, or a required confidence entry is missing. Confidence can request human verification, but it can never make an invoice postable.
 
 ### Review and resume
 
@@ -78,7 +78,7 @@ The Phase 1/2 boundary converts every amount to currency-aware integer minor uni
 
 Currency validation uses the pinned `currency-codes` table plus reviewed current-code overrides from ISO 4217 amendments. Withdrawn codes remain accepted so historical invoices can still be processed; new or changed codes must be added with their official SIX amendment and a regression test when the pinned table is updated.
 
-Every step emits stable reason codes, explicit capability adaptations, and per-port source provenance. Provider outages become `unknown_retry`; genuine misses become review outcomes. Low-confidence fields only cause `verify_extraction` when a deterministic mismatch exists.
+Every step emits stable reason codes, explicit capability adaptations, and per-port source provenance. Provider outages become `unknown_retry`; genuine misses become review outcomes. Low or incomplete extraction confidence causes `verify_extraction` before financial posting.
 
 ## Accounting providers
 
@@ -142,13 +142,14 @@ Posting is disabled unless it is explicitly enabled with QuickBooks internal acc
 
 ```bash
 QBO_MCP_ENABLE_POSTING=true
+QBO_MCP_SINGLE_WRITER=true
 QBO_MCP_EXPENSE_ACCOUNT_ID=your-expense-account-id
 QBO_MCP_TAX_ACCOUNT_ID=your-tax-account-id # required for invoices containing tax
 QBO_MCP_AP_ACCOUNT_ID=your-ap-account-id    # optional
 npm run qbo-mcp:verify
 ```
 
-The workflow—not the model—calls only `create-bill`; the MCP client allowlist denies every other mutation. Before creating a bill it searches by invoice number and either returns `already_posted` for an exact match or stops on a conflict. Intuit's current MCP tool does not expose QuickBooks' `requestid` parameter, so this is safe retry handling rather than a claim of database-level exactly-once delivery. Pin and re-audit the upstream server before changing its commit.
+The workflow—not the model—calls only `create-bill`; the MCP client allowlist denies every other mutation. Before creating a bill it searches by invoice number and either returns `already_posted` for an exact match or stops on a conflict. A shared local lock keyed globally by normalized invoice number serializes that complete search/create conflict domain across processes on one host, including distinct workflow digests and independently configured MCP clients. This scope is deliberately conservative so an incorrect realm label cannot split the lock. Posting requires the explicit `QBO_MCP_SINGLE_WRITER=true` deployment contract: run exactly one posting replica, and point every process on that replica at the same `QBO_MCP_POSTING_LOCK_DIR`. A lock left by a crashed writer fails closed for reconciliation. Multiple posting hosts are unsupported without replacing this guard with a distributed idempotency store. Intuit's current MCP tool does not expose QuickBooks' `requestid` parameter, so this is safe retry handling rather than a claim of database-level exactly-once delivery. Pin and re-audit the upstream server before changing its commit.
 
 ### Phase 3 approval and posting
 
@@ -219,6 +220,14 @@ Pipeline steps never consume raw accounting-system objects or read environment v
 ## Results and storage
 
 Mastra persists workflow state and snapshots through `LibSQLStore` at `MASTRA_DB_URL`. Without that variable it uses the owner-only `<project>/data/mastra.db`. Final output contains the normalized invoice, resolved canonical records, decisions, adaptations, sources, policy, disposition, approval evidence, and posting receipt. The fixture invoice-history and posting adapters are intentionally in-memory; a production deployment should bind pipeline history to its durable database.
+
+Chat intake also appends one lifecycle event per run state to `<project>/data/ap-kpis.ndjson` (override with `AP_KPI_LOG_PATH`). KPI persistence is best-effort and cannot change a financial workflow result. Generate the current aggregate at any time with:
+
+```bash
+npm run kpis:report
+```
+
+The report groups events by run ID, uses only the latest financial state for run and exception counts, measures approval time only from a pending event to an explicit successful approval or rejection, and excludes human-approved posts from straight-through processing. A failed resume does not alter approval state or timing, but remains counted once as an integration failure for that run even after a later successful retry. The report includes straight-through rate, exception categories, pending approvals, approval time, integration failures, and posted count. Processing cost remains in Mastra Studio Observability, where model token and cost data are correlated with traces; the local report points there rather than estimating cost.
 
 Useful commands:
 

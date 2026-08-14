@@ -3,6 +3,7 @@ import { createStep, createWorkflow } from '@mastra/core/workflows'
 import { z } from 'zod'
 import { ReviewerContextSchema } from '../schemas/invoice.ts'
 import { activePhase2Runtime } from '../phase2/composition.ts'
+import { verifyAssessment } from '../phase2/assessment-integrity.ts'
 import { FinalAssessmentSchema, Phase3ResultSchema, PostingRequestSchema, type ApprovalEvidence, type FinalAssessment, type Phase3Result } from '../phase2/schemas.ts'
 
 const approvalResumeSchema = z.object({ approved: z.boolean(), comment: z.string().trim().max(1000).optional() })
@@ -15,6 +16,7 @@ const approve = createStep({
   suspendSchema: z.object({ invoiceNumber: z.string(), vendorName: z.string(), currency: z.string(), totalMinor: z.number(), reasons: z.array(z.string()), invoiceDigest: z.string() }),
   resumeSchema: approvalResumeSchema, requestContextSchema: ReviewerContextSchema,
   execute: async ({ inputData, resumeData, requestContext, suspend }) => {
+    if (!verifyAssessment(inputData)) throw new Error('Assessment provenance is invalid')
     if (inputData.disposition === 'auto_post') return result(inputData, evidence(inputData, { status: 'not_required', decidedAt: new Date().toISOString() }), 'ready_to_post')
     if (inputData.disposition !== 'approval_required') return result(inputData, evidence(inputData, {}), 'not_postable')
     if (!resumeData) return await suspend({ invoiceNumber: inputData.invoice.invoiceNumber, vendorName: inputData.invoice.vendorName, currency: inputData.invoice.currency, totalMinor: inputData.invoice.totalMinor, reasons: inputData.decisions.flatMap(decision => decision.reasons.map(reason => reason.code)), invoiceDigest: digest(inputData) })
@@ -45,4 +47,3 @@ export const apExecutionWorkflow = createWorkflow({
   id: 'ap-execution-workflow', inputSchema: FinalAssessmentSchema, outputSchema: Phase3ResultSchema,
   requestContextSchema: ReviewerContextSchema, options: { shouldPersistSnapshot: () => true },
 }).then(approve).then(post).commit()
-

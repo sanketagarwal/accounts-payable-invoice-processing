@@ -1,8 +1,11 @@
 import { z } from 'zod'
 import Decimal from 'decimal.js'
+import { createHash } from 'node:crypto'
+import { mkdir, rmdir } from 'node:fs/promises'
+import { resolve } from 'node:path'
 import { PostingConflictError, ProviderUnavailableError, type PostingAdapter, type PurchaseOrderRepository, type VendorLookup, type VendorRepository } from '../ports.ts'
 import { PostingReceiptSchema, PostingRequestSchema, type PostingRequest } from '../schemas.ts'
-import { hasQboInvoiceNumber, mapQboBill, mapQboPurchaseOrder, mapQboVendor, type QboBill, type QboPurchaseOrder, type QboVendor } from './quickbooks-adapter.ts'
+import { mapQboBill, mapQboPurchaseOrder, mapQboVendor, type QboBill, type QboPurchaseOrder, type QboVendor } from './quickbooks-adapter.ts'
 import type { McpToolClient } from './mcp-tool-client.ts'
 
 const requiredTools = ['search_vendors', 'search_purchase_orders', 'search_bills'] as const
@@ -14,7 +17,7 @@ const records = (result: unknown) => {
   return texts.flatMap(text => { try { const value: unknown = JSON.parse(text); return Array.isArray(value) ? value : [value] } catch { return [] } }).filter((value): value is Record<string, unknown> => Boolean(value) && typeof value === 'object' && !Array.isArray(value))
 }
 
-export interface QuickBooksMcpPostingConfig { expenseAccountId: string; taxAccountId?: string; apAccountId?: string }
+export interface QuickBooksMcpPostingConfig { expenseAccountId: string; taxAccountId?: string; apAccountId?: string; lockDirectory?: string }
 const exponent = (currency: string) => new Intl.NumberFormat('en', { style: 'currency', currency }).resolvedOptions().maximumFractionDigits ?? 2
 const major = (minor: number, currency: string) => new Decimal(minor).div(new Decimal(10).pow(exponent(currency))).toNumber()
 
@@ -45,13 +48,32 @@ export class QuickBooksMcpAdapter implements VendorRepository, PurchaseOrderRepo
     if (!matches.length && rows.length === this.poLimit) throw new ProviderUnavailableError('quickbooks-mcp', 'search_purchase_orders result window exhausted')
     return matches.map(row => mapQboPurchaseOrder(row as QboPurchaseOrder))
   }
-  async billHistorySeed() { return (await this.call('search_bills', { fetchAll: true })).filter(row => hasQboInvoiceNumber(row as QboBill)).map(row => mapQboBill(row as QboBill)) }
+  async billHistorySeed() { return (await this.call('search_bills', { fetchAll: true })).map(row => mapQboBill(row as QboBill)) }
   async postBill(input: PostingRequest) {
     if (!this.postingConfig) throw new Error('QuickBooks MCP posting is disabled')
     input = PostingRequestSchema.parse(input)
-    const pending = this.posting.get(input.idempotencyKey) ?? this.post(input)
+    const pending = this.posting.get(input.idempotencyKey) ?? this.withPostingLock(input)
     this.posting.set(input.idempotencyKey, pending)
     try { return await pending } finally { if (this.posting.get(input.idempotencyKey) === pending) this.posting.delete(input.idempotencyKey) }
+  }
+  private async withPostingLock(input: PostingRequest) {
+    const root = this.postingConfig?.lockDirectory ?? resolve('data/qbo-posting-locks')
+    const conflictIdentity = input.invoice.invoiceNumber.trim().toLowerCase()
+    const lock = resolve(root, createHash('sha256').update(conflictIdentity).digest('hex'))
+    await mkdir(root, { recursive: true, mode: 0o700 })
+    const deadline = Date.now() + 15_000
+    while (true) {
+      try {
+        await mkdir(lock, { mode: 0o700 })
+        break
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+        if (Date.now() >= deadline) throw new ProviderUnavailableError('quickbooks-mcp', 'posting idempotency lock is held; reconcile the invoice before retrying')
+        await new Promise(resolveWait => setTimeout(resolveWait, 100))
+      }
+    }
+    try { return await this.post(input) }
+    finally { await rmdir(lock).catch(() => undefined) }
   }
   private async post(input: PostingRequest) {
     const config = this.postingConfig

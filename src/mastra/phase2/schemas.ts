@@ -40,7 +40,7 @@ export const GoodsReceiptSchema = z.object({
 })
 export type GoodsReceipt = z.infer<typeof GoodsReceiptSchema>
 export const PriorInvoiceSchema = z.object({
-  id: z.string(), vendorId: z.string(), invoiceNumber: z.string(), invoiceDate: z.string(), currency: z.string(), totalMinor: MoneySchema,
+  id: z.string(), vendorId: z.string(), invoiceNumber: z.string().nullable(), invoiceDate: z.string(), currency: z.string(), totalMinor: MoneySchema,
   channel: z.string().nullable(),
 })
 export type PriorInvoice = z.infer<typeof PriorInvoiceSchema>
@@ -58,10 +58,11 @@ export const AssessmentStateSchema = z.object({
   decisions: z.array(StepDecisionSchema), matchMode: z.enum(['two_way', 'three_way']).nullable(), duplicateIds: z.array(z.string()),
 })
 export type AssessmentState = z.infer<typeof AssessmentStateSchema>
-export const FinalAssessmentSchema = AssessmentStateSchema.extend({
+export const UnsignedFinalAssessmentSchema = AssessmentStateSchema.extend({
   disposition: z.enum(['auto_post', 'approval_required', 'review', 'blocked', 'retry', 'verify_extraction']),
   policy: PolicyConfigSchema,
 })
+export const FinalAssessmentSchema = UnsignedFinalAssessmentSchema.extend({ assessmentSignature: z.string().regex(/^[a-f0-9]{64}$/) })
 export type FinalAssessment = z.infer<typeof FinalAssessmentSchema>
 
 export const ApprovalEvidenceSchema = z.object({
