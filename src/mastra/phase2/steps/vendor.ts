@@ -2,6 +2,7 @@ import type { Phase2Runtime } from '../composition.ts'
 import { runtimeSources } from '../composition.ts'
 import { ProviderUnavailableError } from '../ports.ts'
 import { AssessmentStateSchema, type AssessmentState, type Phase2Invoice, type StepDecision } from '../schemas.ts'
+import { confidenceProblems } from '../confidence.ts'
 
 const initial = (invoice: Phase2Invoice): AssessmentState => ({ invoice, vendor: null, purchaseOrder: null, receipts: [], decisions: [], matchMode: null, duplicateIds: [] })
 const unavailable = (error: ProviderUnavailableError, sources: Record<string, string>): StepDecision => ({ step: 'vendor', outcome: 'unknown_retry', reviewType: null, reasons: [{ code: 'VENDOR_LOOKUP_UNAVAILABLE', message: error.message }], signals: [], adaptations: [], sources })
@@ -11,11 +12,9 @@ export function makeVendorValidation(runtime: Phase2Runtime) {
   return async (invoice: Phase2Invoice) => {
     const state = initial(invoice), adaptations: StepDecision['adaptations'] = [], signals: string[] = []
     const policy = await runtime.policy.getPolicy()
-    const requiredConfidence = ['invoiceNumber', 'vendorName', 'poNumber', 'invoiceDate', 'currency', 'subtotal', 'tax', 'total', 'lines']
-    const uncertainFields = invoice.confidence.filter(item => item.confidence < policy.lowConfidenceThreshold).map(item => item.field)
-    const missingConfidence = requiredConfidence.filter(field => !invoice.confidence.some(item => item.field === field))
+    const { uncertainFields, missingConfidence } = confidenceProblems(invoice, policy.lowConfidenceThreshold)
     if (invoice.overallConfidence < policy.lowConfidenceThreshold || uncertainFields.length || missingConfidence.length) {
-      state.decisions.push({ step: 'extraction', outcome: 'verify_extraction', reviewType: null, reasons: [{ code: 'LOW_EXTRACTION_CONFIDENCE', message: 'Document extraction requires human verification before financial controls run', evidence: { overallConfidence: invoice.overallConfidence, uncertainFields, missingConfidence } }], signals: ['low_extraction_confidence'], adaptations, sources: {} })
+      state.decisions.push({ step: 'extraction', outcome: 'verify_extraction', reviewType: 'verify_extraction', reasons: [{ code: 'LOW_EXTRACTION_CONFIDENCE', message: 'Document extraction requires human verification before financial controls run', evidence: { overallConfidence: invoice.overallConfidence, uncertainFields, missingConfidence } }], signals: ['low_extraction_confidence'], adaptations, sources: {} })
       return AssessmentStateSchema.parse(state)
     }
     if (!provider.capabilities.vendorBankDetails) { adaptations.push({ code: 'VENDOR_BANK_DETAILS_UNAVAILABLE', providerId: sources.vendors }); signals.push('payment_details_unverifiable') }
