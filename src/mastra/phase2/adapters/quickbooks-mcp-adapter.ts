@@ -17,7 +17,7 @@ const records = (result: unknown) => {
   return texts.flatMap(text => { try { const value: unknown = JSON.parse(text); return Array.isArray(value) ? value : [value] } catch { return [] } }).filter((value): value is Record<string, unknown> => Boolean(value) && typeof value === 'object' && !Array.isArray(value))
 }
 
-export interface QuickBooksMcpPostingConfig { realmId: string; expenseAccountId: string; taxAccountId?: string; apAccountId?: string; lockDirectory?: string }
+export interface QuickBooksMcpPostingConfig { expenseAccountId: string; taxAccountId?: string; apAccountId?: string; lockDirectory?: string }
 const exponent = (currency: string) => new Intl.NumberFormat('en', { style: 'currency', currency }).resolvedOptions().maximumFractionDigits ?? 2
 const major = (minor: number, currency: string) => new Decimal(minor).div(new Decimal(10).pow(exponent(currency))).toNumber()
 
@@ -58,7 +58,7 @@ export class QuickBooksMcpAdapter implements VendorRepository, PurchaseOrderRepo
   }
   private async withPostingLock(input: PostingRequest) {
     const root = this.postingConfig?.lockDirectory ?? resolve('data/qbo-posting-locks')
-    const conflictIdentity = `${this.postingConfig!.realmId}\0${input.invoice.invoiceNumber.trim().toLowerCase()}`
+    const conflictIdentity = input.invoice.invoiceNumber.trim().toLowerCase()
     const lock = resolve(root, createHash('sha256').update(conflictIdentity).digest('hex'))
     await mkdir(root, { recursive: true, mode: 0o700 })
     const deadline = Date.now() + 15_000
