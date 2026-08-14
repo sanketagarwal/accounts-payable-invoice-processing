@@ -2,8 +2,9 @@ import type { Phase2Runtime } from '../composition.ts'
 import { runtimeSources } from '../composition.ts'
 import { ProviderUnavailableError, ReferenceCrosswalkError } from '../ports.ts'
 import { AssessmentStateSchema, type AssessmentState, type PurchaseOrder, type StepDecision } from '../schemas.ts'
+import { hasLowConfidence } from '../confidence.ts'
 
-const lowConfidence = (state: AssessmentState, fields: string[], threshold: number) => state.invoice.confidence.some(item => fields.includes(item.field) && item.confidence < threshold)
+const lowConfidence = (state: AssessmentState, fields: string[], threshold: number) => hasLowConfidence(state.invoice, fields, threshold)
 const mismatchReasons = (mismatches: string[]) => [
   { code: 'PO_MISMATCH', message: 'Invoice does not match the purchase order', evidence: { mismatches } },
   ...(mismatches.some(mismatch => mismatch.endsWith('.unitPrice')) ? [{ code: 'PRICE_VARIANCE', message: 'One or more invoice unit prices exceed the PO tolerance', evidence: { mismatches: mismatches.filter(mismatch => mismatch.endsWith('.unitPrice')) } }] : []),

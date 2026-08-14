@@ -306,6 +306,29 @@ const lowOverallState = await makeVendorValidation(fixtureRuntime)({ ...normaliz
 assert.equal(lowOverallState.decisions[0]!.outcome, 'verify_extraction')
 const incompleteConfidenceState = await makeVendorValidation(fixtureRuntime)({ ...normalized, confidence: normalized.confidence.filter(item => item.field !== 'tax') })
 assert.equal(incompleteConfidenceState.decisions[0]!.outcome, 'verify_extraction')
+const indexedLineConfidence = normalized.confidence.filter(item => item.field !== 'lines').concat([
+  { field: 'lines[0].sku', confidence: 0.99 }, { field: 'lines[0].description', confidence: 0.99 },
+  { field: 'lines[0].qty', confidence: 0.99 }, { field: 'lines[0].unitPrice', confidence: 0.99 }, { field: 'lines[0].lineTotal', confidence: 0.99 },
+])
+const indexedLineConfidenceState = await makeVendorValidation(fixtureRuntime)({ ...normalized, confidence: indexedLineConfidence })
+assert.equal(indexedLineConfidenceState.decisions[0]!.outcome, 'pass')
+const flatSingleLineConfidence = indexedLineConfidence.map(item => ({ ...item, field: item.field.replace(/^lines\[0\]\./, '') }))
+const flatSingleLineConfidenceState = await makeVendorValidation(fixtureRuntime)({ ...normalized, confidence: flatSingleLineConfidence })
+assert.equal(flatSingleLineConfidenceState.decisions[0]!.outcome, 'pass')
+const missingLineConfidenceState = await makeVendorValidation(fixtureRuntime)({ ...normalized, confidence: indexedLineConfidence.filter(item => item.field !== 'lines[0].qty') })
+assert.equal(missingLineConfidenceState.decisions[0]!.outcome, 'verify_extraction')
+assert.deepEqual(missingLineConfidenceState.decisions[0]!.reasons[0]!.evidence?.missingConfidence, ['lines.0.qty'])
+const optionalLowConfidenceState = await makeVendorValidation(fixtureRuntime)({ ...normalized, confidence: [...indexedLineConfidence, { field: 'vendorTaxId', confidence: 0.1 }] })
+assert.equal(optionalLowConfidenceState.decisions[0]!.outcome, 'pass')
+const unknownVendorState = await makeVendorValidation(fixtureRuntime)({ ...normalized, vendorName: 'Not A Sandbox Vendor LLC', vendorTaxId: null, confidence: flatSingleLineConfidence })
+assert.equal(unknownVendorState.decisions[0]!.reviewType, 'unknown_vendor')
+let quantityVarianceState = await makeVendorValidation(fixtureRuntime)({
+  ...normalized, subtotalMinor: 11_000, totalMinor: 11_000,
+  lines: [{ ...normalized.lines[0]!, qty: 11, lineTotalMinor: 11_000 }], confidence: indexedLineConfidence,
+})
+quantityVarianceState = await makeInvoiceMatch(fixtureRuntime)(quantityVarianceState)
+assert.equal(quantityVarianceState.decisions.at(-1)!.reviewType, 'review_quantity_variance')
+assert.ok(quantityVarianceState.decisions.at(-1)!.reasons.some(reason => reason.code === 'QUANTITY_VARIANCE'))
 let lineMismatchState = await makeVendorValidation(fixtureRuntime)({ ...normalized, lines: [{ ...normalized.lines[0]!, qty: 5, unitPriceMinor: 2000 }] })
 lineMismatchState = await makeInvoiceMatch(fixtureRuntime)(lineMismatchState)
 assert.equal(lineMismatchState.decisions.at(-1)!.reviewType, 'review_price_variance')

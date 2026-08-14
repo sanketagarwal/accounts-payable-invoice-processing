@@ -53,7 +53,7 @@ npm run invoice:run -- path/to/invoice.pdf
 The vision reader accepts PDF, PNG, and JPEG files inside `INVOICE_ROOT`, checks file size before reading, verifies magic bytes and checksum, then sends those exact bytes as a multimodal file part. Use a provider/model that supports the document MIME type. The reader never returns ERP IDs, and document source metadata comes from the trusted input rather than the model.
 
 Phase 1 checks dates, currencies, required fields, and printed-amount arithmetic. Model confidence is retained for monitoring and extraction-error routing, but never decides whether financial data is valid.
-The reader workflow suspends when deterministic integrity checks fail: canonical date, ISO-4217 currency, required values, currency-aware printed-amount arithmetic, or subtotal/line reconciliation. Extended line totals and invoice totals must use the currency's minor-unit precision; unit prices may retain legitimate sub-minor precision and are checked through rounded line reconciliation. The AP decision workflow also routes to `verify_extraction` when overall confidence is low, a required field confidence is low, or a required confidence entry is missing. Confidence can request human verification, but it can never make an invoice postable.
+The reader workflow suspends when deterministic integrity checks fail: canonical date, ISO-4217 currency, required values, currency-aware printed-amount arithmetic, or subtotal/line reconciliation. Extended line totals and invoice totals must use the currency's minor-unit precision; unit prices may retain legitimate sub-minor precision and are checked through rounded line reconciliation. The AP decision workflow also routes to `verify_extraction` when overall confidence is low, a required field confidence is low, or a required confidence entry is missing. Line confidence may be reported as an aggregate `lines` entry or as indexed paths such as `lines[0].qty`; single-line legacy inputs with flat line-field names are also accepted. Confidence can request human verification, but it can never make an invoice postable.
 
 ### Review and resume
 
@@ -221,7 +221,7 @@ Pipeline steps never consume raw accounting-system objects or read environment v
 
 Mastra persists workflow state and snapshots through `LibSQLStore` at `MASTRA_DB_URL`. Without that variable it uses the owner-only `<project>/data/mastra.db`. Final output contains the normalized invoice, resolved canonical records, decisions, adaptations, sources, policy, disposition, approval evidence, and posting receipt. The fixture invoice-history and posting adapters are intentionally in-memory; a production deployment should bind pipeline history to its durable database.
 
-Chat intake also appends one lifecycle event per run state to `<project>/data/ap-kpis.ndjson` (override with `AP_KPI_LOG_PATH`). KPI persistence is best-effort and cannot change a financial workflow result. Generate the current aggregate at any time with:
+Chat intake returns the deterministic disposition, review types, every reason code with its message/evidence, capability adaptations, and posting status. It also appends one lifecycle event per run state to `<project>/data/ap-kpis.ndjson` (override with `AP_KPI_LOG_PATH`). KPI persistence is best-effort and cannot change a financial workflow result. Generate the current aggregate at any time with:
 
 ```bash
 npm run kpis:report
