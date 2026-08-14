@@ -34,7 +34,7 @@ Open the URL printed by `mastra dev`, select `apInvoiceWorkflow`, and start it w
 }
 ```
 
-The workflow uses local fixtures by default, so this path needs no model or accounting-system credentials. Select `invoiceReaderWorkflow` to inspect Phase 1 alone. The intermediate decision workflow is internal; it is not registered as a directly startable Studio/API workflow. The execution workflow is registered only so approval snapshots can be resumed, and it accepts assessments signed by the deterministic decision workflow. Use the chat intake agent or `apInvoiceWorkflow` for the complete trusted-document path. Set a long random `AP_ASSESSMENT_SIGNING_KEY` in every non-local deployment; `MASTRA_AUTH_TOKEN` is used as a fallback, and assessment signing refuses to run in production or with QuickBooks posting enabled without one of them.
+The workflow uses local fixtures by default, so this path needs no model or accounting-system credentials. Select `invoiceReaderWorkflow` to inspect Phase 1 alone. The intermediate decision workflow is internal; it is not registered as a directly startable Studio/API workflow. The execution workflow is registered only so approval snapshots can be resumed, and it accepts assessments signed by the deterministic decision workflow. Use the chat intake agent or `apInvoiceWorkflow` for the complete trusted-document path. Set a long random, server-only `AP_ASSESSMENT_SIGNING_KEY` in every non-local deployment. It must be independent of `MASTRA_AUTH_TOKEN`, which Studio/API users may know; assessment signing refuses to run in production or with QuickBooks posting enabled when the dedicated key is absent.
 
 Studio protects its API with the local `SimpleAuth` credentials in `.env.example`. Sign in with any email and use `MASTRA_AUTH_TOKEN` as the password. The example token is for localhost only; production startup requires explicit credentials, and a deployed template should replace `SimpleAuth` with its JWT/SSO provider.
 
@@ -143,13 +143,14 @@ Posting is disabled unless it is explicitly enabled with QuickBooks internal acc
 ```bash
 QBO_MCP_ENABLE_POSTING=true
 QBO_MCP_SINGLE_WRITER=true
+QBO_MCP_REALM_ID=your-sandbox-realm-id
 QBO_MCP_EXPENSE_ACCOUNT_ID=your-expense-account-id
 QBO_MCP_TAX_ACCOUNT_ID=your-tax-account-id # required for invoices containing tax
 QBO_MCP_AP_ACCOUNT_ID=your-ap-account-id    # optional
 npm run qbo-mcp:verify
 ```
 
-The workflow—not the model—calls only `create-bill`; the MCP client allowlist denies every other mutation. Before creating a bill it searches by invoice number and either returns `already_posted` for an exact match or stops on a conflict. A shared local lock serializes search/create across processes on one host. Posting requires the explicit `QBO_MCP_SINGLE_WRITER=true` deployment contract: run exactly one posting replica, and point every process on that replica at the same `QBO_MCP_POSTING_LOCK_DIR`. A lock left by a crashed writer fails closed for reconciliation. Multiple posting hosts are unsupported without replacing this guard with a distributed idempotency store. Intuit's current MCP tool does not expose QuickBooks' `requestid` parameter, so this is safe retry handling rather than a claim of database-level exactly-once delivery. Pin and re-audit the upstream server before changing its commit.
+The workflow—not the model—calls only `create-bill`; the MCP client allowlist denies every other mutation. Before creating a bill it searches by invoice number and either returns `already_posted` for an exact match or stops on a conflict. A shared local lock keyed by QuickBooks realm and normalized invoice number serializes that complete search/create conflict domain across processes on one host, including distinct workflow digests for the same supplier invoice. Posting requires the explicit `QBO_MCP_SINGLE_WRITER=true` deployment contract: run exactly one posting replica, and point every process on that replica at the same `QBO_MCP_POSTING_LOCK_DIR`. A lock left by a crashed writer fails closed for reconciliation. Multiple posting hosts are unsupported without replacing this guard with a distributed idempotency store. Intuit's current MCP tool does not expose QuickBooks' `requestid` parameter, so this is safe retry handling rather than a claim of database-level exactly-once delivery. Pin and re-audit the upstream server before changing its commit.
 
 ### Phase 3 approval and posting
 
@@ -227,7 +228,7 @@ Chat intake also appends one lifecycle event per run state to `<project>/data/ap
 npm run kpis:report
 ```
 
-The report groups events by run ID, uses only the latest state for run and exception counts, measures approval time from the pending event to its resolved event, and excludes human-approved posts from straight-through processing. It reports straight-through rate, exception categories, pending approvals, approval time, integration failures, and posted count. Processing cost remains in Mastra Studio Observability, where model token and cost data are correlated with traces; the local report points there rather than estimating cost.
+The report groups events by run ID, uses only the latest state for run and exception counts, measures approval time only from a pending event to an explicit successful approval or rejection, and excludes human-approved posts from straight-through processing. A failed resume is recorded as an integration failure while the approval remains pending. The report includes straight-through rate, exception categories, pending approvals, approval time, integration failures, and posted count. Processing cost remains in Mastra Studio Observability, where model token and cost data are correlated with traces; the local report points there rather than estimating cost.
 
 Useful commands:
 

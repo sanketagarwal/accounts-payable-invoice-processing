@@ -5,11 +5,12 @@ import { assertProvider, type AccountingProvider } from './types.ts'
 export function makeQuickBooksMcpProvider(client?: McpToolClient): AccountingProvider {
   const postingValue = process.env.QBO_MCP_ENABLE_POSTING?.trim().toLowerCase()
   if (postingValue && !['true', 'false'].includes(postingValue)) throw new Error('QBO_MCP_ENABLE_POSTING must be true or false')
-  const postingEnabled = postingValue === 'true', expenseAccountId = process.env.QBO_MCP_EXPENSE_ACCOUNT_ID?.trim()
+  const postingEnabled = postingValue === 'true', expenseAccountId = process.env.QBO_MCP_EXPENSE_ACCOUNT_ID?.trim(), realmId = process.env.QBO_MCP_REALM_ID?.trim()
   if (postingEnabled && !expenseAccountId) throw new Error('QBO_MCP_EXPENSE_ACCOUNT_ID is required when QuickBooks MCP posting is enabled')
+  if (postingEnabled && !realmId) throw new Error('QBO_MCP_REALM_ID is required when QuickBooks MCP posting is enabled')
   if (postingEnabled && process.env.QBO_MCP_SINGLE_WRITER?.trim().toLowerCase() !== 'true') throw new Error('QBO_MCP_SINGLE_WRITER=true is required when QuickBooks MCP posting is enabled')
   const resolvedClient = client ?? createQuickBooksMcpToolClient({ enablePosting: postingEnabled })
-  const adapter = new QuickBooksMcpAdapter(resolvedClient, 1000, postingEnabled ? { expenseAccountId: expenseAccountId!, taxAccountId: process.env.QBO_MCP_TAX_ACCOUNT_ID?.trim(), apAccountId: process.env.QBO_MCP_AP_ACCOUNT_ID?.trim(), lockDirectory: process.env.QBO_MCP_POSTING_LOCK_DIR?.trim() } : undefined)
+  const adapter = new QuickBooksMcpAdapter(resolvedClient, 1000, postingEnabled ? { realmId: realmId!, expenseAccountId: expenseAccountId!, taxAccountId: process.env.QBO_MCP_TAX_ACCOUNT_ID?.trim(), apAccountId: process.env.QBO_MCP_AP_ACCOUNT_ID?.trim(), lockDirectory: process.env.QBO_MCP_POSTING_LOCK_DIR?.trim() } : undefined)
   return assertProvider({
     id: 'quickbooks-mcp', displayName: 'QuickBooks Online MCP',
     capabilities: { vendors: true, vendorBankDetails: false, vendorStatusRichness: 'binary', purchaseOrders: true, goodsReceipts: false, billHistory: true, sanctions: false, invoiceChannel: false, posting: postingEnabled },

@@ -1,9 +1,9 @@
 import { createHmac, timingSafeEqual } from 'node:crypto'
 
 const signingKey = () => {
-  const key = process.env.AP_ASSESSMENT_SIGNING_KEY?.trim() || process.env.MASTRA_AUTH_TOKEN?.trim()
+  const key = process.env.AP_ASSESSMENT_SIGNING_KEY?.trim()
   if (key) return key
-  if (process.env.NODE_ENV === 'production' || process.env.QBO_MCP_ENABLE_POSTING?.trim().toLowerCase() === 'true') throw new Error('AP_ASSESSMENT_SIGNING_KEY or MASTRA_AUTH_TOKEN is required for production or QuickBooks posting')
+  if (process.env.NODE_ENV === 'production' || process.env.QBO_MCP_ENABLE_POSTING?.trim().toLowerCase() === 'true') throw new Error('A server-only AP_ASSESSMENT_SIGNING_KEY is required for production or QuickBooks posting')
   return 'local-development-assessment-key'
 }
 

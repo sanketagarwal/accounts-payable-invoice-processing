@@ -28,6 +28,7 @@ import { makeInvoiceMatch } from '../mastra/phase2/steps/match.ts'
 import { makeDuplicateDetection } from '../mastra/phase2/steps/dedup.ts'
 import { makePolicyRouting } from '../mastra/phase2/steps/policy.ts'
 import { makeVendorValidation } from '../mastra/phase2/steps/vendor.ts'
+import { signAssessment } from '../mastra/phase2/assessment-integrity.ts'
 import { ProviderUnavailableError } from '../mastra/phase2/ports.ts'
 import type { FinalAssessment } from '../mastra/phase2/schemas.ts'
 import { apExecutionWorkflow } from '../mastra/phase3/workflow.ts'
@@ -208,11 +209,13 @@ const postingMcp: McpToolClient = {
     return mcpResult()
   }, disconnect: async () => undefined,
 }
-const priorPostingFlag = process.env.QBO_MCP_ENABLE_POSTING, priorExpenseAccount = process.env.QBO_MCP_EXPENSE_ACCOUNT_ID, priorSingleWriter = process.env.QBO_MCP_SINGLE_WRITER
+const priorPostingFlag = process.env.QBO_MCP_ENABLE_POSTING, priorExpenseAccount = process.env.QBO_MCP_EXPENSE_ACCOUNT_ID, priorSingleWriter = process.env.QBO_MCP_SINGLE_WRITER, priorRealmId = process.env.QBO_MCP_REALM_ID
 try {
-  process.env.QBO_MCP_ENABLE_POSTING = 'true'; delete process.env.QBO_MCP_EXPENSE_ACCOUNT_ID; delete process.env.QBO_MCP_SINGLE_WRITER
+  process.env.QBO_MCP_ENABLE_POSTING = 'true'; delete process.env.QBO_MCP_EXPENSE_ACCOUNT_ID; delete process.env.QBO_MCP_SINGLE_WRITER; delete process.env.QBO_MCP_REALM_ID
   assert.throws(() => makeQuickBooksMcpProvider(postingMcp), /QBO_MCP_EXPENSE_ACCOUNT_ID/)
   process.env.QBO_MCP_EXPENSE_ACCOUNT_ID = 'expense-1'
+  assert.throws(() => makeQuickBooksMcpProvider(postingMcp), /QBO_MCP_REALM_ID/)
+  process.env.QBO_MCP_REALM_ID = 'sandbox-realm'
   assert.throws(() => makeQuickBooksMcpProvider(postingMcp), /QBO_MCP_SINGLE_WRITER/)
   process.env.QBO_MCP_SINGLE_WRITER = 'true'
   assert.equal(makeQuickBooksMcpProvider(postingMcp).capabilities.posting, true)
@@ -220,8 +223,9 @@ try {
   if (priorPostingFlag === undefined) delete process.env.QBO_MCP_ENABLE_POSTING; else process.env.QBO_MCP_ENABLE_POSTING = priorPostingFlag
   if (priorExpenseAccount === undefined) delete process.env.QBO_MCP_EXPENSE_ACCOUNT_ID; else process.env.QBO_MCP_EXPENSE_ACCOUNT_ID = priorExpenseAccount
   if (priorSingleWriter === undefined) delete process.env.QBO_MCP_SINGLE_WRITER; else process.env.QBO_MCP_SINGLE_WRITER = priorSingleWriter
+  if (priorRealmId === undefined) delete process.env.QBO_MCP_REALM_ID; else process.env.QBO_MCP_REALM_ID = priorRealmId
 }
-const postingAdapter = new QuickBooksMcpAdapter(postingMcp, 1000, { expenseAccountId: 'expense-1', taxAccountId: 'tax-1' })
+const postingAdapter = new QuickBooksMcpAdapter(postingMcp, 1000, { realmId: 'sandbox-realm', expenseAccountId: 'expense-1', taxAccountId: 'tax-1' })
 const testDigest = '1'.repeat(64)
 const postingRequest = {
   idempotencyKey: `ap-${testDigest}`, invoice: normalized, vendor: fixtureProvider.vendors ? (await fixtureProvider.vendors.find({ name: normalized.vendorName }))[0]! : undefined!,
@@ -236,9 +240,9 @@ assert.equal(billPayload.LinkedTxn[0]!.TxnId, 'po_1001')
 assert.ok(billPayload.PrivateNote.includes(testDigest))
 createdBill = { ...createdBill, PrivateNote: 'unrelated bill' }
 await assert.rejects(postingAdapter.postBill(postingRequest), /conflicting bill/)
-await assert.rejects(new QuickBooksMcpAdapter({ ...postingMcp, listToolNames: async () => new Set([...await postingMcp.listToolNames(), 'update_bill']) }, 1000, { expenseAccountId: 'expense-1' }).postBill(postingRequest), ProviderUnavailableError)
+await assert.rejects(new QuickBooksMcpAdapter({ ...postingMcp, listToolNames: async () => new Set([...await postingMcp.listToolNames(), 'update_bill']) }, 1000, { realmId: 'sandbox-realm', expenseAccountId: 'expense-1' }).postBill(postingRequest), ProviderUnavailableError)
 createdBill = undefined
-await assert.rejects(new QuickBooksMcpAdapter(postingMcp, 1000, { expenseAccountId: 'expense-1' }).postBill({ ...postingRequest, invoice: { ...normalized, invoiceNumber: 'TAX-MISSING' } }), /QBO_MCP_TAX_ACCOUNT_ID/)
+await assert.rejects(new QuickBooksMcpAdapter(postingMcp, 1000, { realmId: 'sandbox-realm', expenseAccountId: 'expense-1' }).postBill({ ...postingRequest, invoice: { ...normalized, invoiceNumber: 'TAX-MISSING' } }), /QBO_MCP_TAX_ACCOUNT_ID/)
 const postingLockRoot = await mkdtemp(join(dirname(defaultStoragePath), 'qbo-lock-test-'))
 try {
   createdBill = undefined
@@ -247,10 +251,17 @@ try {
     if (tool === 'create-bill') createCalls++
     return postingMcp.call(tool, input)
   } }
-  const config = { expenseAccountId: 'expense-1', taxAccountId: 'tax-1', lockDirectory: postingLockRoot }
+  const config = { realmId: 'sandbox-realm', expenseAccountId: 'expense-1', taxAccountId: 'tax-1', lockDirectory: postingLockRoot }
   const receipts = await Promise.all([new QuickBooksMcpAdapter(concurrentMcp, 1000, config).postBill(postingRequest), new QuickBooksMcpAdapter(concurrentMcp, 1000, config).postBill(postingRequest)])
   assert.equal(createCalls, 1)
   assert.deepEqual(receipts.map(receipt => receipt.status).sort(), ['already_posted', 'posted'])
+  createdBill = undefined; createCalls = 0
+  const otherDigest = '2'.repeat(64)
+  const distinctKeyRequest = { ...postingRequest, idempotencyKey: `ap-${otherDigest}`, approval: { ...postingRequest.approval, invoiceDigest: otherDigest } }
+  const distinctResults = await Promise.allSettled([new QuickBooksMcpAdapter(concurrentMcp, 1000, config).postBill(postingRequest), new QuickBooksMcpAdapter(concurrentMcp, 1000, config).postBill(distinctKeyRequest)])
+  assert.equal(createCalls, 1)
+  assert.equal(distinctResults.filter(result => result.status === 'fulfilled').length, 1)
+  assert.equal(distinctResults.filter(result => result.status === 'rejected').length, 1)
 } finally { await rm(postingLockRoot, { recursive: true, force: true }) }
 
 assert.throws(() => createPhase2Runtime({ provider: quickbooks }), /sanctions/)
@@ -381,18 +392,32 @@ const forgedExecution = await apExecutionWorkflow.createRun()
 console.error = () => undefined
 const forgedResult = await forgedExecution.start({ inputData: { ...approved, assessmentSignature: '0'.repeat(64) } }).finally(() => { console.error = originalConsoleError })
 assert.equal(forgedResult.status, 'failed')
+const priorAssessmentKey = process.env.AP_ASSESSMENT_SIGNING_KEY, priorAuthToken = process.env.MASTRA_AUTH_TOKEN, priorSigningPosting = process.env.QBO_MCP_ENABLE_POSTING
+try {
+  delete process.env.AP_ASSESSMENT_SIGNING_KEY
+  process.env.MASTRA_AUTH_TOKEN = 'known-studio-token'
+  process.env.QBO_MCP_ENABLE_POSTING = 'true'
+  assert.throws(() => signAssessment({ disposition: 'auto_post' }), /server-only AP_ASSESSMENT_SIGNING_KEY/)
+} finally {
+  if (priorAssessmentKey === undefined) delete process.env.AP_ASSESSMENT_SIGNING_KEY; else process.env.AP_ASSESSMENT_SIGNING_KEY = priorAssessmentKey
+  if (priorAuthToken === undefined) delete process.env.MASTRA_AUTH_TOKEN; else process.env.MASTRA_AUTH_TOKEN = priorAuthToken
+  if (priorSigningPosting === undefined) delete process.env.QBO_MCP_ENABLE_POSTING; else process.env.QBO_MCP_ENABLE_POSTING = priorSigningPosting
+}
 
-const kpiBase: ApKpiEvent = { runId: 'approval-run', recordedAt: '2026-08-14T00:00:00.000Z', executionStatus: null, disposition: 'approval_required', reasons: ['VENDOR_VALID'], reviewTypes: [], signals: [], adaptations: [], postingStatus: null, integrationFailure: false, approvalPending: true }
+const kpiBase: ApKpiEvent = { runId: 'approval-run', recordedAt: '2026-08-14T00:00:00.000Z', executionStatus: null, disposition: 'approval_required', reasons: ['VENDOR_VALID'], reviewTypes: [], signals: [], adaptations: [], postingStatus: null, integrationFailure: false, approvalPending: true, approvalState: 'pending' }
 const kpiReport = buildApKpiReport([
   kpiBase,
-  { ...kpiBase, recordedAt: '2026-08-14T00:00:05.000Z', executionStatus: 'posted', postingStatus: 'posted', approvalPending: false },
-  { ...kpiBase, runId: 'stp-run', recordedAt: '2026-08-14T00:00:01.000Z', disposition: 'auto_post', executionStatus: 'posted', postingStatus: 'posted', approvalPending: false },
-  { ...kpiBase, runId: 'failed-run', recordedAt: '2026-08-14T00:00:02.000Z', disposition: null, reasons: ['DECISION_WORKFLOW_FAILED'], integrationFailure: true, approvalPending: false },
+  { ...kpiBase, recordedAt: '2026-08-14T00:00:05.000Z', executionStatus: 'posted', postingStatus: 'posted', approvalPending: false, approvalState: 'approved' },
+  { ...kpiBase, runId: 'stp-run', recordedAt: '2026-08-14T00:00:01.000Z', disposition: 'auto_post', executionStatus: 'posted', postingStatus: 'posted', approvalPending: false, approvalState: 'not_applicable' },
+  { ...kpiBase, runId: 'failed-run', recordedAt: '2026-08-14T00:00:02.000Z', disposition: null, reasons: ['DECISION_WORKFLOW_FAILED'], integrationFailure: true, approvalPending: false, approvalState: 'not_applicable' },
+  { ...kpiBase, runId: 'failed-resume', recordedAt: '2026-08-14T00:00:03.000Z' },
+  { ...kpiBase, runId: 'failed-resume', recordedAt: '2026-08-14T00:00:04.000Z', integrationFailure: true, approvalState: 'resume_failed' },
 ])
-assert.equal(kpiReport.runs, 3)
+assert.equal(kpiReport.runs, 4)
 assert.equal(kpiReport.straightThroughProcessingRate, 1 / 3)
 assert.deepEqual(kpiReport.approvalTimeMs, { count: 1, average: 5000 })
-assert.equal(kpiReport.integrationFailures, 1)
+assert.equal(kpiReport.integrationFailures, 2)
+assert.equal(kpiReport.pendingApprovals, 1)
 const badKpiTarget = await mkdtemp(join(dirname(defaultStoragePath), 'kpi-failure-test-'))
 const priorKpiPath = process.env.AP_KPI_LOG_PATH
 try {
