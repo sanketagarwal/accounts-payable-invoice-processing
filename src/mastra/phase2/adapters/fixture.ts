@@ -23,7 +23,7 @@ export class FixturePurchaseOrderRepository implements PurchaseOrderRepository {
 export class FixtureGoodsReceiptRepository implements GoodsReceiptRepository { async findByPurchaseOrderId(id: string) { return fixtureDb.receipts.filter(receipt => receipt.purchaseOrderId === id) } }
 export class InMemoryInvoiceHistoryRepository implements InvoiceHistoryRepository {
   private readonly invoices = new Map<string, PriorInvoice>()
-  async findPotentialDuplicates(input: { vendorId: string; invoiceNumber: string; currency: string; totalMinor: number }) { return [...this.invoices.values()].filter(i => i.vendorId === input.vendorId && (norm(i.invoiceNumber) === norm(input.invoiceNumber) || (i.currency === input.currency && i.totalMinor === input.totalMinor))) }
+  async findPotentialDuplicates(input: { vendorId: string; invoiceNumber: string; currency: string; totalMinor: number }) { return [...this.invoices.values()].filter(i => i.vendorId === input.vendorId && (i.invoiceNumber !== null && norm(i.invoiceNumber) === norm(input.invoiceNumber) || (i.currency === input.currency && i.totalMinor === input.totalMinor))) }
   async seed(invoices: PriorInvoice[]) { for (const invoice of invoices) this.invoices.set(invoice.id, invoice) }
   async save(invoice: PriorInvoice) { this.invoices.set(invoice.id, invoice) }
 }

@@ -11,11 +11,6 @@ export interface QboClient { query<T>(entity: string, query: string): Promise<T[
 export class QboUnavailableError extends ProviderUnavailableError { constructor(operation: string, cause?: unknown) { super('quickbooks', operation, { cause }); this.name = 'QboUnavailableError' } }
 const quote = (value: string) => value.replaceAll("'", "\\'")
 const required = (value: string | undefined, field: string) => { if (!value) throw new Error(`QuickBooks ${field} missing`); return value }
-// QBO permits bills without a supplier invoice number (DocNumber). They cannot
-// participate in an invoice-number duplicate check, so ignore them rather than
-// failing every AP run while loading history.
-export const hasQboInvoiceNumber = (row: QboBill) => Boolean(row.DocNumber?.trim())
-
 export const mapQboVendor = (row: QboVendor) => VendorRecordSchema.parse({ id: required(row.Id, 'Vendor.Id'), name: required(row.DisplayName, 'Vendor.DisplayName'), taxId: row.TaxIdentifier ?? null, status: row.Active === false ? 'inactive' : 'approved', bankDetailsFingerprint: null })
 export const mapQboPurchaseOrder = (row: QboPurchaseOrder) => {
   const currency = row.CurrencyRef?.value ?? 'USD'
@@ -27,7 +22,7 @@ export const mapQboPurchaseOrder = (row: QboPurchaseOrder) => {
     }),
   })
 }
-export const mapQboBill = (row: QboBill) => { const currency = row.CurrencyRef?.value ?? 'USD'; return PriorInvoiceSchema.parse({ id: required(row.Id, 'Bill.Id'), vendorId: required(row.VendorRef?.value, 'Bill.VendorRef'), invoiceNumber: required(row.DocNumber, 'Bill.DocNumber'), invoiceDate: required(row.TxnDate, 'Bill.TxnDate'), currency, totalMinor: toMinorUnits(row.TotalAmt ?? 0, currency), channel: null }) }
+export const mapQboBill = (row: QboBill) => { const currency = row.CurrencyRef?.value ?? 'USD'; return PriorInvoiceSchema.parse({ id: required(row.Id, 'Bill.Id'), vendorId: required(row.VendorRef?.value, 'Bill.VendorRef'), invoiceNumber: row.DocNumber?.trim() || null, invoiceDate: required(row.TxnDate, 'Bill.TxnDate'), currency, totalMinor: toMinorUnits(row.TotalAmt ?? 0, currency), channel: null }) }
 
 export class HttpQboClient implements QboClient {
   constructor(private readonly realmId: string, private readonly accessToken: string, private readonly baseUrl = 'https://sandbox-quickbooks.api.intuit.com') {}
@@ -56,6 +51,6 @@ export class QuickBooksAdapter implements VendorRepository, PurchaseOrderReposit
       const page = await this.client.query<QboBill>('Bill', `select * from Bill startposition ${start} maxresults ${this.billPageSize}`)
       rows.push(...page); if (page.length < this.billPageSize) break
     }
-    return rows.filter(hasQboInvoiceNumber).map(mapQboBill)
+    return rows.map(mapQboBill)
   }
 }

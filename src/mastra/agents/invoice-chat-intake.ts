@@ -1,4 +1,5 @@
 import { Agent } from '@mastra/core/agent'
+import { randomUUID } from 'node:crypto'
 import type { RequestContext } from '@mastra/core/request-context'
 import { createTool } from '@mastra/core/tools'
 import { z } from 'zod'
@@ -30,12 +31,12 @@ const submitInvoice = createTool({
     const requestContext = context?.requestContext as RequestContext<ReviewerContext> | undefined
     const candidate = { ...draft, source }
     const checked = validateExtraction(candidate)
-    if (!checked.extracted) return toolResult.parse({ status: 'needs_extraction_review', runId: null, executionStatus: null, approvalPending: false, reasons: checked.issues, reviewTypes: [], signals: [], adaptations: [], error: null })
+    if (!checked.extracted) { const output = toolResult.parse({ status: 'needs_extraction_review', runId: null, executionStatus: null, approvalPending: false, reasons: checked.issues, reviewTypes: [], signals: [], adaptations: [], error: null }); await recordApKpi({ ...output, runId: `extraction-${randomUUID()}`, recordedAt: new Date().toISOString(), disposition: 'verify_extraction', postingStatus: null, integrationFailure: false }); return output }
     const document = { id: documentId, mimeType: source === 'PDF' ? 'application/pdf' : 'image/jpeg', source, sha256: undefined }
     const phase1 = { rawDocumentRef: document, extractedResult: checked.extracted, checks: { passed: true, issues: [] }, reviewerId: null, vendorId: null, poId: null, snapshot: { rawDocumentRef: document, extractedResult: checked.extracted } }
     const decisionRun = await apDecisionWorkflow.createRun()
     const decision = await decisionRun.start({ inputData: phase1 })
-    if (decision.status !== 'success') return toolResult.parse({ status: 'failed', runId: decisionRun.runId, executionStatus: null, approvalPending: false, reasons: [], error: `Decision workflow ended ${decision.status}` })
+    if (decision.status !== 'success') { const output = toolResult.parse({ status: 'failed', runId: decisionRun.runId, executionStatus: null, approvalPending: false, reasons: [], reviewTypes: [], signals: [], adaptations: [], error: `Decision workflow ended ${decision.status}` }); await recordApKpi({ ...output, recordedAt: new Date().toISOString(), disposition: null, postingStatus: null, integrationFailure: true }); return output }
     const executionRun = await apExecutionWorkflow.createRun()
     const execution = await executionRun.start({ inputData: decision.result, requestContext })
     return await summarize(execution, executionRun.runId)

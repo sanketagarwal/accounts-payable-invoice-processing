@@ -31,6 +31,8 @@ import { makeVendorValidation } from '../mastra/phase2/steps/vendor.ts'
 import { ProviderUnavailableError } from '../mastra/phase2/ports.ts'
 import type { FinalAssessment } from '../mastra/phase2/schemas.ts'
 import { apExecutionWorkflow } from '../mastra/phase3/workflow.ts'
+import { buildApKpiReport } from '../mastra/monitoring/ap-kpi-report.ts'
+import { recordApKpi, type ApKpiEvent } from '../mastra/monitoring/ap-kpis.ts'
 import { invoiceFixtures, runFixture } from './support.ts'
 
 for (const fixture of invoiceFixtures) {
@@ -162,7 +164,7 @@ const pageStarts: number[] = [], pagingClient: QboClient = { query: async <T>(_e
 assert.equal((await new QuickBooksAdapter(pagingClient, 2).billHistorySeed()).length, 3)
 assert.deepEqual(pageStarts, [1, 3])
 const noDocNumberClient: QboClient = { query: async <T>() => [{ Id: 'qbo_unlabeled', VendorRef: { value: 'qbo_vendor_acme' }, TotalAmt: 50, TxnDate: '2026-01-01' }] as T[] }
-assert.deepEqual(await new QuickBooksAdapter(noDocNumberClient).billHistorySeed(), [])
+assert.equal((await new QuickBooksAdapter(noDocNumberClient).billHistorySeed())[0]!.invoiceNumber, null)
 
 const mcpCalls: Array<{ tool: string; input: unknown }> = []
 const mcpResult = (...values: unknown[]) => ({ content: [{ type: 'text', text: `Found ${values.length} records:` }, ...values.map(value => ({ type: 'text', text: JSON.stringify(value) }))] })
@@ -181,7 +183,7 @@ assert.equal((await qboMcp.vendors!.find({ name: 'Acme Supplies' }))[0]!.id, 'qb
 assert.equal((await qboMcp.purchaseOrders!.findByNumber('PO-1001'))[0]!.id, 'qbo_po_1001')
 assert.equal((await qboMcp.billHistorySeed!())[0]!.id, 'qbo_prior')
 const noDocNumberMcp: McpToolClient = { listToolNames: qboMcpClient.listToolNames, call: async () => mcpResult({ Id: 'qbo_unlabeled', VendorRef: { value: 'qbo_vendor_acme' }, TotalAmt: 50, TxnDate: '2026-01-01' }), disconnect: async () => undefined }
-assert.deepEqual(await makeQuickBooksMcpProvider(noDocNumberMcp).billHistorySeed!(), [])
+assert.equal((await makeQuickBooksMcpProvider(noDocNumberMcp).billHistorySeed!())[0]!.invoiceNumber, null)
 assert.deepEqual(mcpCalls.map(call => call.tool), ['search_vendors', 'search_purchase_orders', 'search_bills'])
 const incompleteMcp: McpToolClient = { listToolNames: async () => new Set(['search_vendors']), call: async () => mcpResult(), disconnect: async () => undefined }
 await assert.rejects(makeQuickBooksMcpProvider(incompleteMcp).vendors!.find({ name: 'Acme Supplies' }), ProviderUnavailableError)
@@ -206,15 +208,18 @@ const postingMcp: McpToolClient = {
     return mcpResult()
   }, disconnect: async () => undefined,
 }
-const priorPostingFlag = process.env.QBO_MCP_ENABLE_POSTING, priorExpenseAccount = process.env.QBO_MCP_EXPENSE_ACCOUNT_ID
+const priorPostingFlag = process.env.QBO_MCP_ENABLE_POSTING, priorExpenseAccount = process.env.QBO_MCP_EXPENSE_ACCOUNT_ID, priorSingleWriter = process.env.QBO_MCP_SINGLE_WRITER
 try {
-  process.env.QBO_MCP_ENABLE_POSTING = 'true'; delete process.env.QBO_MCP_EXPENSE_ACCOUNT_ID
+  process.env.QBO_MCP_ENABLE_POSTING = 'true'; delete process.env.QBO_MCP_EXPENSE_ACCOUNT_ID; delete process.env.QBO_MCP_SINGLE_WRITER
   assert.throws(() => makeQuickBooksMcpProvider(postingMcp), /QBO_MCP_EXPENSE_ACCOUNT_ID/)
   process.env.QBO_MCP_EXPENSE_ACCOUNT_ID = 'expense-1'
+  assert.throws(() => makeQuickBooksMcpProvider(postingMcp), /QBO_MCP_SINGLE_WRITER/)
+  process.env.QBO_MCP_SINGLE_WRITER = 'true'
   assert.equal(makeQuickBooksMcpProvider(postingMcp).capabilities.posting, true)
 } finally {
   if (priorPostingFlag === undefined) delete process.env.QBO_MCP_ENABLE_POSTING; else process.env.QBO_MCP_ENABLE_POSTING = priorPostingFlag
   if (priorExpenseAccount === undefined) delete process.env.QBO_MCP_EXPENSE_ACCOUNT_ID; else process.env.QBO_MCP_EXPENSE_ACCOUNT_ID = priorExpenseAccount
+  if (priorSingleWriter === undefined) delete process.env.QBO_MCP_SINGLE_WRITER; else process.env.QBO_MCP_SINGLE_WRITER = priorSingleWriter
 }
 const postingAdapter = new QuickBooksMcpAdapter(postingMcp, 1000, { expenseAccountId: 'expense-1', taxAccountId: 'tax-1' })
 const testDigest = '1'.repeat(64)
@@ -234,6 +239,19 @@ await assert.rejects(postingAdapter.postBill(postingRequest), /conflicting bill/
 await assert.rejects(new QuickBooksMcpAdapter({ ...postingMcp, listToolNames: async () => new Set([...await postingMcp.listToolNames(), 'update_bill']) }, 1000, { expenseAccountId: 'expense-1' }).postBill(postingRequest), ProviderUnavailableError)
 createdBill = undefined
 await assert.rejects(new QuickBooksMcpAdapter(postingMcp, 1000, { expenseAccountId: 'expense-1' }).postBill({ ...postingRequest, invoice: { ...normalized, invoiceNumber: 'TAX-MISSING' } }), /QBO_MCP_TAX_ACCOUNT_ID/)
+const postingLockRoot = await mkdtemp(join(dirname(defaultStoragePath), 'qbo-lock-test-'))
+try {
+  createdBill = undefined
+  let createCalls = 0
+  const concurrentMcp: McpToolClient = { ...postingMcp, call: async (tool, input) => {
+    if (tool === 'create-bill') createCalls++
+    return postingMcp.call(tool, input)
+  } }
+  const config = { expenseAccountId: 'expense-1', taxAccountId: 'tax-1', lockDirectory: postingLockRoot }
+  const receipts = await Promise.all([new QuickBooksMcpAdapter(concurrentMcp, 1000, config).postBill(postingRequest), new QuickBooksMcpAdapter(concurrentMcp, 1000, config).postBill(postingRequest)])
+  assert.equal(createCalls, 1)
+  assert.deepEqual(receipts.map(receipt => receipt.status).sort(), ['already_posted', 'posted'])
+} finally { await rm(postingLockRoot, { recursive: true, force: true }) }
 
 assert.throws(() => createPhase2Runtime({ provider: quickbooks }), /sanctions/)
 const qboRuntime = createPhase2Runtime({ provider: quickbooks, history: new InMemoryInvoiceHistoryRepository(), policy: new FixturePolicyProvider(), sanctionsFallback: new FixtureSanctionsScreener() })
@@ -276,6 +294,10 @@ const fixtureRuntime = createPhase2Runtime({ provider: fixtureProvider, history:
 const lowConfidenceState = await makeVendorValidation(fixtureRuntime)({ ...normalized, confidence: [{ field: 'invoiceNumber', confidence: 0.2 }] })
 assert.equal(lowConfidenceState.decisions[0]!.outcome, 'verify_extraction')
 assert.equal(lowConfidenceState.decisions[0]!.reasons[0]!.code, 'LOW_EXTRACTION_CONFIDENCE')
+const lowOverallState = await makeVendorValidation(fixtureRuntime)({ ...normalized, overallConfidence: 0.2 })
+assert.equal(lowOverallState.decisions[0]!.outcome, 'verify_extraction')
+const incompleteConfidenceState = await makeVendorValidation(fixtureRuntime)({ ...normalized, confidence: normalized.confidence.filter(item => item.field !== 'tax') })
+assert.equal(incompleteConfidenceState.decisions[0]!.outcome, 'verify_extraction')
 let lineMismatchState = await makeVendorValidation(fixtureRuntime)({ ...normalized, lines: [{ ...normalized.lines[0]!, qty: 5, unitPriceMinor: 2000 }] })
 lineMismatchState = await makeInvoiceMatch(fixtureRuntime)(lineMismatchState)
 assert.equal(lineMismatchState.decisions.at(-1)!.reviewType, 'review_price_variance')
@@ -307,6 +329,13 @@ duplicateState = await makeInvoiceMatch(fixtureRuntime)(duplicateState)
 duplicateState = await makeDuplicateDetection(fixtureRuntime)(duplicateState)
 assert.equal(duplicateState.decisions.at(-1)!.reviewType, 'possible_duplicate')
 assert.equal((await makePolicyRouting(fixtureRuntime)(duplicateState)).disposition, 'review')
+const unlabeledHistory = new InMemoryInvoiceHistoryRepository()
+await unlabeledHistory.seed([{ id: 'unlabeled', vendorId: 'vendor_acme', invoiceNumber: null, invoiceDate: normalized.invoiceDate, currency: normalized.currency, totalMinor: normalized.totalMinor, channel: null }])
+const unlabeledRuntime = createPhase2Runtime({ provider: fixtureProvider, history: unlabeledHistory, policy: new FixturePolicyProvider() })
+let unlabeledState = await makeVendorValidation(unlabeledRuntime)({ ...normalized, invoiceNumber: 'NEW-NUMBER' })
+unlabeledState = await makeInvoiceMatch(unlabeledRuntime)(unlabeledState)
+unlabeledState = await makeDuplicateDetection(unlabeledRuntime)(unlabeledState)
+assert.ok(unlabeledState.duplicateIds.includes('unlabeled'))
 const currencyHistory = new InMemoryInvoiceHistoryRepository()
 await currencyHistory.seed([{ id: 'eur_same_amount', vendorId: 'vendor_acme', invoiceNumber: 'EUR-OTHER', invoiceDate: normalized.invoiceDate, currency: 'EUR', totalMinor: normalized.totalMinor, channel: null }])
 const currencyRuntime = createPhase2Runtime({ provider: fixtureProvider, history: currencyHistory, policy: new FixturePolicyProvider() })
@@ -331,7 +360,8 @@ assert.equal(approved.disposition, 'approval_required')
 
 const approvalRun = await apExecutionWorkflow.createRun(), approvalStart = await approvalRun.start({ inputData: approved })
 assert.equal(approvalStart.status, 'suspended')
-const approvedExecution = await approvalRun.resume({ step: 'approve-invoice', resumeData: { approved: true, comment: 'Reviewed' }, requestContext })
+const freshApprovalHandle = await apExecutionWorkflow.createRun({ runId: approvalRun.runId })
+const approvedExecution = await freshApprovalHandle.resume({ step: 'approve-invoice', resumeData: { approved: true, comment: 'Reviewed' }, requestContext })
 assert.equal(approvedExecution.status, 'success')
 if (approvedExecution.status === 'success') {
   assert.equal(approvedExecution.result.executionStatus, 'posted')
@@ -347,6 +377,33 @@ assert.equal(unauthenticatedStart.status, 'suspended')
 console.error = () => undefined
 const unauthenticatedResult = await unauthenticatedApproval.resume({ step: 'approve-invoice', resumeData: { approved: true } }).finally(() => { console.error = originalConsoleError })
 assert.equal(unauthenticatedResult.status, 'failed')
+const forgedExecution = await apExecutionWorkflow.createRun()
+console.error = () => undefined
+const forgedResult = await forgedExecution.start({ inputData: { ...approved, assessmentSignature: '0'.repeat(64) } }).finally(() => { console.error = originalConsoleError })
+assert.equal(forgedResult.status, 'failed')
+
+const kpiBase: ApKpiEvent = { runId: 'approval-run', recordedAt: '2026-08-14T00:00:00.000Z', executionStatus: null, disposition: 'approval_required', reasons: ['VENDOR_VALID'], reviewTypes: [], signals: [], adaptations: [], postingStatus: null, integrationFailure: false, approvalPending: true }
+const kpiReport = buildApKpiReport([
+  kpiBase,
+  { ...kpiBase, recordedAt: '2026-08-14T00:00:05.000Z', executionStatus: 'posted', postingStatus: 'posted', approvalPending: false },
+  { ...kpiBase, runId: 'stp-run', recordedAt: '2026-08-14T00:00:01.000Z', disposition: 'auto_post', executionStatus: 'posted', postingStatus: 'posted', approvalPending: false },
+  { ...kpiBase, runId: 'failed-run', recordedAt: '2026-08-14T00:00:02.000Z', disposition: null, reasons: ['DECISION_WORKFLOW_FAILED'], integrationFailure: true, approvalPending: false },
+])
+assert.equal(kpiReport.runs, 3)
+assert.equal(kpiReport.straightThroughProcessingRate, 1 / 3)
+assert.deepEqual(kpiReport.approvalTimeMs, { count: 1, average: 5000 })
+assert.equal(kpiReport.integrationFailures, 1)
+const badKpiTarget = await mkdtemp(join(dirname(defaultStoragePath), 'kpi-failure-test-'))
+const priorKpiPath = process.env.AP_KPI_LOG_PATH
+try {
+  process.env.AP_KPI_LOG_PATH = badKpiTarget
+  console.error = () => undefined
+  assert.equal(await recordApKpi(kpiBase), false)
+} finally {
+  console.error = originalConsoleError
+  if (priorKpiPath === undefined) delete process.env.AP_KPI_LOG_PATH; else process.env.AP_KPI_LOG_PATH = priorKpiPath
+  await rm(badKpiTarget, { recursive: true, force: true })
+}
 
 const unavailableProvider = assertProvider({ ...fixtureProvider, id: 'unavailable', vendors: { find: async () => { throw new ProviderUnavailableError('unavailable', 'find vendor') } } })
 const unavailableState = await makeVendorValidation(createPhase2Runtime({ provider: unavailableProvider }))(normalized)
