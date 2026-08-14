@@ -10,11 +10,14 @@ The model reads the document; deterministic workflow steps own every financial c
 
 ## Run the template
 
+Requires Node.js 22.13 or newer.
+
 ```bash
 cp .env.example .env
 npm install
 npm run typecheck
 npm test
+npm run build
 npm run phase2:run
 npm run dev
 ```
