@@ -7,7 +7,7 @@ import type {
   PurchaseOrder,
   SanctionsResult,
   VendorRecord,
-} from "./schemas.ts";
+} from './schemas.ts';
 
 export type VendorLookup = { name: string; taxId?: string | null };
 export interface VendorRepository {
@@ -36,22 +36,11 @@ export interface PolicyProvider {
   getPolicy(): Promise<PolicyConfig>;
 }
 export interface VendorStatusRestrictionSource {
-  getRestriction(input: {
-    providerId: string;
-    vendorId: string;
-  }): Promise<"on_hold" | "blocked" | null>;
+  getRestriction(input: { providerId: string; vendorId: string }): Promise<'on_hold' | 'blocked' | null>;
 }
 export interface ReferenceCrosswalk {
-  mapVendorId?(input: {
-    id: string;
-    fromNamespace: string;
-    toNamespace: string;
-  }): Promise<string | null>;
-  mapPurchaseOrderId?(input: {
-    id: string;
-    fromNamespace: string;
-    toNamespace: string;
-  }): Promise<string | null>;
+  mapVendorId?(input: { id: string; fromNamespace: string; toNamespace: string }): Promise<string | null>;
+  mapPurchaseOrderId?(input: { id: string; fromNamespace: string; toNamespace: string }): Promise<string | null>;
 }
 export interface PostingAdapter {
   postBill(input: PostingRequest): Promise<PostingReceipt>;
@@ -59,11 +48,11 @@ export interface PostingAdapter {
 
 export class ReferenceCrosswalkError extends Error {
   constructor(
-    readonly entity: "vendor" | "purchaseOrder",
+    readonly entity: 'vendor' | 'purchaseOrder',
     readonly id: string,
   ) {
     super(`No ${entity} crosswalk for ${id}`);
-    this.name = "ReferenceCrosswalkError";
+    this.name = 'ReferenceCrosswalkError';
   }
 }
 
@@ -75,12 +64,12 @@ export class ProviderUnavailableError extends Error {
     options?: { cause?: unknown },
   ) {
     super(`${providerId} unavailable during ${operation}`, options);
-    this.name = "ProviderUnavailableError";
+    this.name = 'ProviderUnavailableError';
   }
 }
 export class PostingConflictError extends Error {
   constructor(message: string) {
     super(message);
-    this.name = "PostingConflictError";
+    this.name = 'PostingConflictError';
   }
 }

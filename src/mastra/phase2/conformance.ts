@@ -1,10 +1,5 @@
-import type {
-  GoodsReceiptRepository,
-  PurchaseOrderRepository,
-  VendorLookup,
-  VendorRepository,
-} from "./ports.ts";
-import { ProviderUnavailableError } from "./ports.ts";
+import type { GoodsReceiptRepository, PurchaseOrderRepository, VendorLookup, VendorRepository } from './ports.ts';
+import { ProviderUnavailableError } from './ports.ts';
 import {
   GoodsReceiptSchema,
   PostingReceiptSchema,
@@ -13,8 +8,8 @@ import {
   SanctionsResultSchema,
   VendorRecordSchema,
   type PostingRequest,
-} from "./schemas.ts";
-import { assertProvider, type AccountingProvider } from "./providers/types.ts";
+} from './schemas.ts';
+import { assertProvider, type AccountingProvider } from './providers/types.ts';
 
 export interface FaultingVendorCase {
   repository: VendorRepository;
@@ -46,10 +41,7 @@ async function expectUnavailable(run: () => Promise<unknown>, label: string) {
   try {
     await run();
   } catch (error) {
-    check(
-      error instanceof ProviderUnavailableError,
-      `${label} must throw ProviderUnavailableError`,
-    );
+    check(error instanceof ProviderUnavailableError, `${label} must throw ProviderUnavailableError`);
     return;
   }
   throw new Error(`${label} must fail instead of returning an empty result`);
@@ -64,38 +56,34 @@ export async function runProviderConformance(
     check(capability === Boolean(port), `${name} capability and port disagree`);
     if (!capability) checks.push(`${name}: absent as declared`);
   };
-  absent(provider.capabilities.vendors, provider.vendors, "vendors");
-  absent(provider.capabilities.purchaseOrders, provider.purchaseOrders, "purchaseOrders");
-  absent(provider.capabilities.goodsReceipts, provider.goodsReceipts, "goodsReceipts");
-  absent(provider.capabilities.sanctions, provider.sanctions, "sanctions");
-  absent(provider.capabilities.billHistory, provider.billHistorySeed, "billHistory");
-  absent(provider.capabilities.posting, provider.posting, "posting");
+  absent(provider.capabilities.vendors, provider.vendors, 'vendors');
+  absent(provider.capabilities.purchaseOrders, provider.purchaseOrders, 'purchaseOrders');
+  absent(provider.capabilities.goodsReceipts, provider.goodsReceipts, 'goodsReceipts');
+  absent(provider.capabilities.sanctions, provider.sanctions, 'sanctions');
+  absent(provider.capabilities.billHistory, provider.billHistorySeed, 'billHistory');
+  absent(provider.capabilities.posting, provider.posting, 'posting');
 
   if (provider.vendors) {
-    check(cases.vendors, "Vendor conformance cases are required");
+    check(cases.vendors, 'Vendor conformance cases are required');
     const found = await provider.vendors.find(cases.vendors!.found);
-    check(found.length > 0, "Known vendor was not found");
-    found.forEach((value) => VendorRecordSchema.parse(value));
-    check(
-      (await provider.vendors.find(cases.vendors!.missing)).length === 0,
-      "Missing vendor must return []",
-    );
+    check(found.length > 0, 'Known vendor was not found');
+    found.forEach(value => VendorRecordSchema.parse(value));
+    check((await provider.vendors.find(cases.vendors!.missing)).length === 0, 'Missing vendor must return []');
     if (cases.vendors!.transportFailure)
       await expectUnavailable(
-        () =>
-          cases.vendors!.transportFailure!.repository.find(cases.vendors!.transportFailure!.lookup),
-        "Vendor transport failure",
+        () => cases.vendors!.transportFailure!.repository.find(cases.vendors!.transportFailure!.lookup),
+        'Vendor transport failure',
       );
-    checks.push("vendors: canonical found, miss, and failure behavior");
+    checks.push('vendors: canonical found, miss, and failure behavior');
   }
   if (provider.purchaseOrders) {
-    check(cases.purchaseOrders, "Purchase-order conformance cases are required");
+    check(cases.purchaseOrders, 'Purchase-order conformance cases are required');
     const found = await provider.purchaseOrders.findByNumber(cases.purchaseOrders!.found);
-    check(found.length > 0, "Known purchase order was not found");
-    found.forEach((value) => PurchaseOrderSchema.parse(value));
+    check(found.length > 0, 'Known purchase order was not found');
+    found.forEach(value => PurchaseOrderSchema.parse(value));
     check(
       (await provider.purchaseOrders.findByNumber(cases.purchaseOrders!.missing)).length === 0,
-      "Missing purchase order must return []",
+      'Missing purchase order must return []',
     );
     if (cases.purchaseOrders!.transportFailure)
       await expectUnavailable(
@@ -103,19 +91,18 @@ export async function runProviderConformance(
           cases.purchaseOrders!.transportFailure!.repository.findByNumber(
             cases.purchaseOrders!.transportFailure!.poNumber,
           ),
-        "Purchase-order transport failure",
+        'Purchase-order transport failure',
       );
-    checks.push("purchaseOrders: canonical found, miss, and failure behavior");
+    checks.push('purchaseOrders: canonical found, miss, and failure behavior');
   }
   if (provider.goodsReceipts) {
-    check(cases.goodsReceipts, "Goods-receipt conformance cases are required");
+    check(cases.goodsReceipts, 'Goods-receipt conformance cases are required');
     const found = await provider.goodsReceipts.findByPurchaseOrderId(cases.goodsReceipts!.found);
-    check(found.length > 0, "Known goods receipt was not found");
-    found.forEach((value) => GoodsReceiptSchema.parse(value));
+    check(found.length > 0, 'Known goods receipt was not found');
+    found.forEach(value => GoodsReceiptSchema.parse(value));
     check(
-      (await provider.goodsReceipts.findByPurchaseOrderId(cases.goodsReceipts!.missing)).length ===
-        0,
-      "Missing goods receipt must return []",
+      (await provider.goodsReceipts.findByPurchaseOrderId(cases.goodsReceipts!.missing)).length === 0,
+      'Missing goods receipt must return []',
     );
     if (cases.goodsReceipts!.transportFailure)
       await expectUnavailable(
@@ -123,31 +110,31 @@ export async function runProviderConformance(
           cases.goodsReceipts!.transportFailure!.repository.findByPurchaseOrderId(
             cases.goodsReceipts!.transportFailure!.purchaseOrderId,
           ),
-        "Goods-receipt transport failure",
+        'Goods-receipt transport failure',
       );
-    checks.push("goodsReceipts: canonical found, miss, and failure behavior");
+    checks.push('goodsReceipts: canonical found, miss, and failure behavior');
   }
   if (provider.sanctions) {
-    check(cases.vendors, "Vendor cases are required to test sanctions");
+    check(cases.vendors, 'Vendor cases are required to test sanctions');
     const [vendor] = (await provider.vendors?.find(cases.vendors!.found)) ?? [];
-    check(vendor, "Known vendor is required to test sanctions");
+    check(vendor, 'Known vendor is required to test sanctions');
     SanctionsResultSchema.parse(await provider.sanctions.screen(vendor!));
-    checks.push("sanctions: canonical result");
+    checks.push('sanctions: canonical result');
   }
   if (provider.billHistorySeed) {
     const history = await provider.billHistorySeed();
-    history.forEach((value) => PriorInvoiceSchema.parse(value));
-    checks.push("billHistory: canonical seed");
+    history.forEach(value => PriorInvoiceSchema.parse(value));
+    checks.push('billHistory: canonical seed');
   }
   if (provider.posting) {
-    check(cases.posting, "Posting conformance case is required");
+    check(cases.posting, 'Posting conformance case is required');
     const first = PostingReceiptSchema.parse(await provider.posting.postBill(cases.posting!)),
       second = PostingReceiptSchema.parse(await provider.posting.postBill(cases.posting!));
     check(
-      first.idempotencyKey === second.idempotencyKey && second.status === "already_posted",
-      "Posting must be idempotent",
+      first.idempotencyKey === second.idempotencyKey && second.status === 'already_posted',
+      'Posting must be idempotent',
     );
-    checks.push("posting: canonical and idempotent receipt");
+    checks.push('posting: canonical and idempotent receipt');
   }
   return { providerId: provider.id, checks };
 }

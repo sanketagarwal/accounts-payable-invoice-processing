@@ -1,5 +1,5 @@
-import { extractionFidelityScorer } from "../mastra/scorers/extraction-fidelity.ts";
-import { invoiceFixtures } from "./support.ts";
+import { extractionFidelityScorer } from '../mastra/scorers/extraction-fidelity.ts';
+import { invoiceFixtures } from './support.ts';
 
 const scores: number[] = [],
   imperfect: string[] = [],
@@ -16,6 +16,6 @@ for (const fixture of invoiceFixtures) {
   console.log(`${fixture.document.id}: ${score.score.toFixed(3)} ${score.reason}`);
 }
 console.log(
-  `mean=${(scores.reduce((sum, score) => sum + score, 0) / scores.length).toFixed(3)} imperfect=${imperfect.join(",") || "none"} regressions=${regressions.join(",") || "none"}`,
+  `mean=${(scores.reduce((sum, score) => sum + score, 0) / scores.length).toFixed(3)} imperfect=${imperfect.join(',') || 'none'} regressions=${regressions.join(',') || 'none'}`,
 );
-if (regressions.length) throw new Error(`Extraction fidelity regressed: ${regressions.join(", ")}`);
+if (regressions.length) throw new Error(`Extraction fidelity regressed: ${regressions.join(', ')}`);

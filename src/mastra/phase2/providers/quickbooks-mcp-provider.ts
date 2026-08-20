@@ -1,21 +1,17 @@
-import { createQuickBooksMcpToolClient, type McpToolClient } from "../adapters/mcp-tool-client.ts";
-import { QuickBooksMcpAdapter } from "../adapters/quickbooks-mcp-adapter.ts";
-import { assertProvider, type AccountingProvider } from "./types.ts";
+import { createQuickBooksMcpToolClient, type McpToolClient } from '../adapters/mcp-tool-client.ts';
+import { QuickBooksMcpAdapter } from '../adapters/quickbooks-mcp-adapter.ts';
+import { assertProvider, type AccountingProvider } from './types.ts';
 
 export function makeQuickBooksMcpProvider(client?: McpToolClient): AccountingProvider {
   const postingValue = process.env.QBO_MCP_ENABLE_POSTING?.trim().toLowerCase();
-  if (postingValue && !["true", "false"].includes(postingValue))
-    throw new Error("QBO_MCP_ENABLE_POSTING must be true or false");
-  const postingEnabled = postingValue === "true",
+  if (postingValue && !['true', 'false'].includes(postingValue))
+    throw new Error('QBO_MCP_ENABLE_POSTING must be true or false');
+  const postingEnabled = postingValue === 'true',
     expenseAccountId = process.env.QBO_MCP_EXPENSE_ACCOUNT_ID?.trim();
   if (postingEnabled && !expenseAccountId)
-    throw new Error(
-      "QBO_MCP_EXPENSE_ACCOUNT_ID is required when QuickBooks MCP posting is enabled",
-    );
-  if (postingEnabled && process.env.QBO_MCP_SINGLE_WRITER?.trim().toLowerCase() !== "true")
-    throw new Error(
-      "QBO_MCP_SINGLE_WRITER=true is required when QuickBooks MCP posting is enabled",
-    );
+    throw new Error('QBO_MCP_EXPENSE_ACCOUNT_ID is required when QuickBooks MCP posting is enabled');
+  if (postingEnabled && process.env.QBO_MCP_SINGLE_WRITER?.trim().toLowerCase() !== 'true')
+    throw new Error('QBO_MCP_SINGLE_WRITER=true is required when QuickBooks MCP posting is enabled');
   const resolvedClient = client ?? createQuickBooksMcpToolClient({ enablePosting: postingEnabled });
   const adapter = new QuickBooksMcpAdapter(
     resolvedClient,
@@ -30,12 +26,12 @@ export function makeQuickBooksMcpProvider(client?: McpToolClient): AccountingPro
       : undefined,
   );
   return assertProvider({
-    id: "quickbooks-mcp",
-    displayName: "QuickBooks Online MCP",
+    id: 'quickbooks-mcp',
+    displayName: 'QuickBooks Online MCP',
     capabilities: {
       vendors: true,
       vendorBankDetails: false,
-      vendorStatusRichness: "binary",
+      vendorStatusRichness: 'binary',
       purchaseOrders: true,
       goodsReceipts: false,
       billHistory: true,
@@ -48,12 +44,12 @@ export function makeQuickBooksMcpProvider(client?: McpToolClient): AccountingPro
     billHistorySeed: () => adapter.billHistorySeed(),
     posting: postingEnabled ? adapter : undefined,
     identityNamespaces: {
-      vendors: "quickbooks",
-      purchaseOrders: "quickbooks",
-      purchaseOrderVendorIds: "quickbooks",
-      billHistoryVendorIds: "quickbooks",
-      postingVendorIds: "quickbooks",
-      postingPurchaseOrders: "quickbooks",
+      vendors: 'quickbooks',
+      purchaseOrders: 'quickbooks',
+      purchaseOrderVendorIds: 'quickbooks',
+      billHistoryVendorIds: 'quickbooks',
+      postingVendorIds: 'quickbooks',
+      postingPurchaseOrders: 'quickbooks',
     },
   });
 }

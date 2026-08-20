@@ -1,8 +1,7 @@
-import type { SanctionsScreener } from "../ports.ts";
-import { makeConnectorProvider } from "./connector-provider.ts";
-import { fixtureProvider } from "./fixture-provider.ts";
-import { makeQuickBooksProvider } from "./quickbooks-provider.ts";
-import { makeQuickBooksMcpProvider } from "./quickbooks-mcp-provider.ts";
+import type { SanctionsScreener } from '../ports.ts';
+import { fixtureProvider } from './fixture-provider.ts';
+import { makeQuickBooksProvider } from './quickbooks-provider.ts';
+import { makeQuickBooksMcpProvider } from './quickbooks-mcp-provider.ts';
 import {
   assertCapabilityPolicy,
   assertProvider,
@@ -10,7 +9,7 @@ import {
   type AccountingProvider,
   type BooleanCapability,
   type CapabilityPolicy,
-} from "./types.ts";
+} from './types.ts';
 
 export type ProviderFactory = () => AccountingProvider;
 export class ProviderRegistry {
@@ -30,10 +29,9 @@ export class ProviderRegistry {
   }
 }
 export const providerRegistry = new ProviderRegistry()
-  .register("fixture", () => fixtureProvider)
-  .register("quickbooks", () => makeQuickBooksProvider())
-  .register("quickbooks-mcp", () => makeQuickBooksMcpProvider())
-  .register("connector", () => makeConnectorProvider({ connectorType: "mcp" }));
+  .register('fixture', () => fixtureProvider)
+  .register('quickbooks', () => makeQuickBooksProvider())
+  .register('quickbooks-mcp', () => makeQuickBooksMcpProvider());
 
 export function validateProviderSelection(
   provider: AccountingProvider,
@@ -42,17 +40,11 @@ export function validateProviderSelection(
   const policy = options.policy ?? defaultCapabilityPolicy;
   assertCapabilityPolicy(policy);
   const missing = policy.required.filter(
-    (capability) =>
-      !provider.capabilities[capability] &&
-      !(capability === "sanctions" && options.sanctionsFallback),
+    capability => !provider.capabilities[capability] && !(capability === 'sanctions' && options.sanctionsFallback),
   );
   if (missing.length)
-    throw new Error(
-      `Accounting provider ${provider.id} is missing required capabilities: ${missing.join(", ")}`,
-    );
+    throw new Error(`Accounting provider ${provider.id} is missing required capabilities: ${missing.join(', ')}`);
   return provider;
 }
-export const missingCapabilities = (
-  provider: AccountingProvider,
-  capabilities: BooleanCapability[],
-) => capabilities.filter((capability) => !provider.capabilities[capability]);
+export const missingCapabilities = (provider: AccountingProvider, capabilities: BooleanCapability[]) =>
+  capabilities.filter(capability => !provider.capabilities[capability]);

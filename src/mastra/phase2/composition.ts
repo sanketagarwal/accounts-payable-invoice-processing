@@ -2,15 +2,15 @@ import {
   FixturePolicyProvider,
   FixtureSanctionsScreener,
   InMemoryInvoiceHistoryRepository,
-} from "./adapters/fixture.ts";
+} from './adapters/fixture.ts';
 import type {
   InvoiceHistoryRepository,
   PolicyProvider,
   SanctionsScreener,
   VendorStatusRestrictionSource,
-} from "./ports.ts";
-import { providerRegistry, validateProviderSelection } from "./providers/registry.ts";
-import { sourceId, type AccountingProvider } from "./providers/types.ts";
+} from './ports.ts';
+import { providerRegistry, validateProviderSelection } from './providers/registry.ts';
+import { sourceId, type AccountingProvider } from './providers/types.ts';
 
 export interface Phase2Runtime {
   provider: AccountingProvider;
@@ -32,12 +32,13 @@ export function createPhase2Runtime(
   } = {},
 ): Phase2Runtime {
   const provider =
-    options.provider ??
-    providerRegistry.create(options.providerId ?? process.env.ACCOUNTING_PROVIDER ?? "fixture");
+    options.provider ?? providerRegistry.create(options.providerId ?? process.env.ACCOUNTING_PROVIDER ?? 'fixture');
   const fallback =
     options.sanctionsFallback ??
-    (process.env.SANCTIONS_SCREENING === "fixture" ? new FixtureSanctionsScreener() : undefined);
+    (process.env.SANCTIONS_SCREENING === 'fixture' ? new FixtureSanctionsScreener() : undefined);
   validateProviderSelection(provider, { sanctionsFallback: fallback });
+  const sanctions = provider.sanctions ?? fallback;
+  if (!sanctions) throw new Error(`Accounting provider ${provider.id} requires a sanctions screener`);
   const history = options.history ?? new InMemoryInvoiceHistoryRepository(),
     policy = options.policy ?? new FixturePolicyProvider();
   let syncing: Promise<void> | undefined;
@@ -45,7 +46,7 @@ export function createPhase2Runtime(
     provider,
     history,
     policy,
-    sanctions: provider.sanctions ?? fallback!,
+    sanctions,
     sanctionsIsFallback: !provider.sanctions,
     statusRestrictions: options.statusRestrictions,
     seedHistory: () => {
@@ -53,7 +54,7 @@ export function createPhase2Runtime(
       if (!syncing)
         syncing = provider
           .billHistorySeed()
-          .then((invoices) => history.seed(invoices))
+          .then(invoices => history.seed(invoices))
           .finally(() => {
             syncing = undefined;
           });
@@ -63,13 +64,9 @@ export function createPhase2Runtime(
 }
 export const activePhase2Runtime = createPhase2Runtime();
 export const runtimeSources = (runtime: Phase2Runtime) => ({
-  vendors: sourceId(runtime.provider, "vendors"),
-  purchaseOrders: sourceId(runtime.provider, "purchaseOrders"),
-  goodsReceipts: sourceId(runtime.provider, "goodsReceipts"),
-  sanctions: runtime.sanctionsIsFallback
-    ? "standalone-sanctions"
-    : sourceId(runtime.provider, "sanctions"),
-  billHistory: runtime.provider.billHistorySeed
-    ? sourceId(runtime.provider, "billHistory")
-    : "pipeline-history",
+  vendors: sourceId(runtime.provider, 'vendors'),
+  purchaseOrders: sourceId(runtime.provider, 'purchaseOrders'),
+  goodsReceipts: sourceId(runtime.provider, 'goodsReceipts'),
+  sanctions: runtime.sanctionsIsFallback ? 'standalone-sanctions' : sourceId(runtime.provider, 'sanctions'),
+  billHistory: runtime.provider.billHistorySeed ? sourceId(runtime.provider, 'billHistory') : 'pipeline-history',
 });

@@ -1,10 +1,10 @@
-import { mastra } from "../mastra/index.ts";
-import { invoiceFixtures } from "../mastra/fixtures/invoices.ts";
+import { mastra } from '../mastra/index.ts';
+import { invoiceFixtures } from '../mastra/fixtures/invoices.ts';
 
-const workflow = mastra.getWorkflow("apInvoiceWorkflow"),
+const workflow = mastra.getWorkflow('apInvoiceWorkflow'),
   run = await workflow.createRun();
 const result = await run.start({ inputData: invoiceFixtures[0]!.document });
-if (result.status !== "success") throw new Error(`AP workflow ended ${result.status}`);
+if (result.status !== 'success') throw new Error(`AP workflow ended ${result.status}`);
 console.log(
   JSON.stringify(
     {

@@ -1,13 +1,8 @@
-import type { Phase2Runtime } from "../composition.ts";
-import { runtimeSources } from "../composition.ts";
-import { ProviderUnavailableError } from "../ports.ts";
-import {
-  AssessmentStateSchema,
-  type AssessmentState,
-  type Phase2Invoice,
-  type StepDecision,
-} from "../schemas.ts";
-import { confidenceProblems } from "../confidence.ts";
+import type { Phase2Runtime } from '../composition.ts';
+import { runtimeSources } from '../composition.ts';
+import { ProviderUnavailableError } from '../ports.ts';
+import { AssessmentStateSchema, type AssessmentState, type Phase2Invoice, type StepDecision } from '../schemas.ts';
+import { confidenceProblems } from '../confidence.ts';
 
 const initial = (invoice: Phase2Invoice): AssessmentState => ({
   invoice,
@@ -18,45 +13,38 @@ const initial = (invoice: Phase2Invoice): AssessmentState => ({
   matchMode: null,
   duplicateIds: [],
 });
-const unavailable = (
-  error: ProviderUnavailableError,
-  sources: Record<string, string>,
-): StepDecision => ({
-  step: "vendor",
-  outcome: "unknown_retry",
+const unavailable = (error: ProviderUnavailableError, sources: Record<string, string>): StepDecision => ({
+  step: 'vendor',
+  outcome: 'unknown_retry',
   reviewType: null,
-  reasons: [{ code: "VENDOR_LOOKUP_UNAVAILABLE", message: error.message }],
+  reasons: [{ code: 'VENDOR_LOOKUP_UNAVAILABLE', message: error.message }],
   signals: [],
   adaptations: [],
   sources,
 });
-const identity = (value: string) => value.replace(/[^a-z0-9]/gi, "").toLowerCase();
+const identity = (value: string) => value.replace(/[^a-z0-9]/gi, '').toLowerCase();
 export function makeVendorValidation(runtime: Phase2Runtime) {
   const provider = runtime.provider,
     sources = runtimeSources(runtime);
   return async (invoice: Phase2Invoice) => {
     const state = initial(invoice),
-      adaptations: StepDecision["adaptations"] = [],
+      adaptations: StepDecision['adaptations'] = [],
       signals: string[] = [];
     const policy = await runtime.policy.getPolicy();
-    const { uncertainFields, missingConfidence } = confidenceProblems(
-      invoice,
-      policy.lowConfidenceThreshold,
-    );
+    const { uncertainFields, missingConfidence } = confidenceProblems(invoice, policy.lowConfidenceThreshold);
     if (
       invoice.overallConfidence < policy.lowConfidenceThreshold ||
       uncertainFields.length ||
       missingConfidence.length
     ) {
       state.decisions.push({
-        step: "extraction",
-        outcome: "verify_extraction",
-        reviewType: "verify_extraction",
+        step: 'extraction',
+        outcome: 'verify_extraction',
+        reviewType: 'verify_extraction',
         reasons: [
           {
-            code: "LOW_EXTRACTION_CONFIDENCE",
-            message:
-              "Document extraction requires human verification before financial controls run",
+            code: 'LOW_EXTRACTION_CONFIDENCE',
+            message: 'Document extraction requires human verification before financial controls run',
             evidence: {
               overallConfidence: invoice.overallConfidence,
               uncertainFields,
@@ -64,20 +52,20 @@ export function makeVendorValidation(runtime: Phase2Runtime) {
             },
           },
         ],
-        signals: ["low_extraction_confidence"],
+        signals: ['low_extraction_confidence'],
         adaptations,
         sources: {},
       });
       return AssessmentStateSchema.parse(state);
     }
     if (!provider.capabilities.vendorBankDetails) {
-      adaptations.push({ code: "VENDOR_BANK_DETAILS_UNAVAILABLE", providerId: sources.vendors });
-      signals.push("payment_details_unverifiable");
+      adaptations.push({ code: 'VENDOR_BANK_DETAILS_UNAVAILABLE', providerId: sources.vendors });
+      signals.push('payment_details_unverifiable');
     }
-    if (provider.capabilities.vendorStatusRichness === "binary")
-      adaptations.push({ code: "VENDOR_STATUS_BINARY", providerId: sources.vendors });
+    if (provider.capabilities.vendorStatusRichness === 'binary')
+      adaptations.push({ code: 'VENDOR_STATUS_BINARY', providerId: sources.vendors });
     if (runtime.sanctionsIsFallback)
-      adaptations.push({ code: "SANCTIONS_SOURCE_FALLBACK", providerId: sources.sanctions });
+      adaptations.push({ code: 'SANCTIONS_SOURCE_FALLBACK', providerId: sources.sanctions });
     try {
       const vendors = await provider.vendors!.find({
         name: invoice.vendorName,
@@ -85,15 +73,15 @@ export function makeVendorValidation(runtime: Phase2Runtime) {
       });
       if (vendors.length !== 1) {
         state.decisions.push({
-          step: "vendor",
-          outcome: "review",
-          reviewType: vendors.length ? "ambiguous_vendor" : "unknown_vendor",
+          step: 'vendor',
+          outcome: 'review',
+          reviewType: vendors.length ? 'ambiguous_vendor' : 'unknown_vendor',
           reasons: [
             {
-              code: vendors.length ? "VENDOR_AMBIGUOUS" : "VENDOR_NOT_FOUND",
+              code: vendors.length ? 'VENDOR_AMBIGUOUS' : 'VENDOR_NOT_FOUND',
               message: vendors.length
-                ? "Multiple vendors match the printed identity"
-                : "No vendor matches the printed identity",
+                ? 'Multiple vendors match the printed identity'
+                : 'No vendor matches the printed identity',
             },
           ],
           signals,
@@ -104,7 +92,7 @@ export function makeVendorValidation(runtime: Phase2Runtime) {
       }
       const vendor = vendors[0]!,
         restriction =
-          provider.capabilities.vendorStatusRichness === "binary"
+          provider.capabilities.vendorStatusRichness === 'binary'
             ? await runtime.statusRestrictions?.getRestriction({
                 providerId: sources.vendors,
                 vendorId: vendor.id,
@@ -112,25 +100,23 @@ export function makeVendorValidation(runtime: Phase2Runtime) {
             : null;
       state.vendor = restriction ? { ...vendor, status: restriction } : vendor;
       const taxIdMismatch =
-        invoice.vendorTaxId &&
-        vendor.taxId &&
-        identity(invoice.vendorTaxId) !== identity(vendor.taxId);
+        invoice.vendorTaxId && vendor.taxId && identity(invoice.vendorTaxId) !== identity(vendor.taxId);
       const mismatchReason = taxIdMismatch
         ? {
-            code: "VENDOR_TAX_ID_MISMATCH",
-            message: "Printed and canonical vendor tax IDs conflict",
+            code: 'VENDOR_TAX_ID_MISMATCH',
+            message: 'Printed and canonical vendor tax IDs conflict',
             evidence: { printed: invoice.vendorTaxId, canonical: vendor.taxId },
           }
         : null;
-      if (invoice.vendorTaxId && !vendor.taxId) signals.push("vendor_tax_id_unverifiable");
-      if (state.vendor.status !== "approved") {
+      if (invoice.vendorTaxId && !vendor.taxId) signals.push('vendor_tax_id_unverifiable');
+      if (state.vendor.status !== 'approved') {
         state.decisions.push({
-          step: "vendor",
-          outcome: "blocked",
+          step: 'vendor',
+          outcome: 'blocked',
           reviewType: null,
           reasons: [
             {
-              code: "VENDOR_NOT_APPROVED",
+              code: 'VENDOR_NOT_APPROVED',
               message: `Vendor status is ${state.vendor.status}`,
               evidence: { status: state.vendor.status },
             },
@@ -145,13 +131,13 @@ export function makeVendorValidation(runtime: Phase2Runtime) {
       const sanctions = await runtime.sanctions.screen(state.vendor);
       if (sanctions.matched) {
         state.decisions.push({
-          step: "vendor",
-          outcome: "blocked",
+          step: 'vendor',
+          outcome: 'blocked',
           reviewType: null,
           reasons: [
             {
-              code: "SANCTIONS_MATCH",
-              message: "Vendor matched a sanctions list",
+              code: 'SANCTIONS_MATCH',
+              message: 'Vendor matched a sanctions list',
               evidence: sanctions,
             },
             ...(mismatchReason ? [mismatchReason] : []),
@@ -164,12 +150,12 @@ export function makeVendorValidation(runtime: Phase2Runtime) {
       }
       if (mismatchReason) {
         const uncertain = invoice.confidence.some(
-          (item) => item.field === "vendorTaxId" && item.confidence < policy.lowConfidenceThreshold,
+          item => item.field === 'vendorTaxId' && item.confidence < policy.lowConfidenceThreshold,
         );
         state.decisions.push({
-          step: "vendor",
-          outcome: uncertain ? "verify_extraction" : "review",
-          reviewType: uncertain ? null : "vendor_identity_mismatch",
+          step: 'vendor',
+          outcome: uncertain ? 'verify_extraction' : 'review',
+          reviewType: uncertain ? null : 'vendor_identity_mismatch',
           reasons: [mismatchReason],
           signals,
           adaptations,
@@ -178,13 +164,13 @@ export function makeVendorValidation(runtime: Phase2Runtime) {
         return AssessmentStateSchema.parse(state);
       }
       state.decisions.push({
-        step: "vendor",
-        outcome: "pass",
+        step: 'vendor',
+        outcome: 'pass',
         reviewType: null,
         reasons: [
           {
-            code: "VENDOR_VALID",
-            message: "Vendor identity and status are valid",
+            code: 'VENDOR_VALID',
+            message: 'Vendor identity and status are valid',
             evidence: { vendorId: state.vendor.id },
           },
         ],

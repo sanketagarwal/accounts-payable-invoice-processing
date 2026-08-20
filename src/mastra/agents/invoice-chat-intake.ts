@@ -1,16 +1,17 @@
-import { Agent } from "@mastra/core/agent";
-import { randomUUID } from "node:crypto";
-import type { RequestContext } from "@mastra/core/request-context";
-import { createTool } from "@mastra/core/tools";
-import { z } from "zod";
-import { apDecisionWorkflow } from "../phase2/workflow.ts";
-import { apExecutionWorkflow } from "../phase3/workflow.ts";
-import { InvoiceDraftSchema, type ReviewerContext } from "../schemas/invoice.ts";
-import { validateExtraction } from "../validation/extraction-checks.ts";
-import { recordApKpi } from "../monitoring/ap-kpis.ts";
+import { Agent } from '@mastra/core/agent';
+import { randomUUID } from 'node:crypto';
+import type { RequestContext } from '@mastra/core/request-context';
+import { createTool } from '@mastra/core/tools';
+import { z } from 'zod';
+import { apDecisionWorkflow } from '../phase2/workflow.ts';
+import { Phase3ResultSchema } from '../phase2/schemas.ts';
+import { ApprovalRequestSchema, apExecutionWorkflow } from '../phase3/workflow.ts';
+import { InvoiceDraftSchema, type DocumentRef, type ReviewerContext } from '../schemas/invoice.ts';
+import { validateExtraction } from '../validation/extraction-checks.ts';
+import { recordApKpi } from '../monitoring/ap-kpis.ts';
 
 const toolResult = z.object({
-  status: z.enum(["processed", "needs_extraction_review", "failed"]),
+  status: z.enum(['processed', 'needs_extraction_review', 'failed']),
   runId: z.string().nullable(),
   executionStatus: z.string().nullable(),
   disposition: z.string().nullable().default(null),
@@ -31,56 +32,64 @@ const toolResult = z.object({
   error: z.string().nullable(),
 });
 type ToolResult = z.infer<typeof toolResult>;
+type WorkflowResult = {
+  status: string;
+  result?: unknown;
+  suspendPayload?: unknown;
+};
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 
 export const buildExtractionReviewResult = (issues: string[]): ToolResult =>
   toolResult.parse({
-    status: "needs_extraction_review",
+    status: 'needs_extraction_review',
     runId: null,
     executionStatus: null,
-    disposition: "verify_extraction",
+    disposition: 'verify_extraction',
     approvalPending: false,
-    reasons: ["EXTRACTION_VALIDATION_FAILED"],
-    reasonDetails: issues.map((message) => ({ code: "EXTRACTION_VALIDATION_FAILED", message })),
-    reviewTypes: ["verify_extraction"],
+    reasons: ['EXTRACTION_VALIDATION_FAILED'],
+    reasonDetails: issues.map(message => ({ code: 'EXTRACTION_VALIDATION_FAILED', message })),
+    reviewTypes: ['verify_extraction'],
     signals: [],
     adaptations: [],
     error: null,
   });
 
-export const buildSuspendedApprovalResult = (result: any, runId: string): ToolResult => {
-  const payload = Object.values(result.suspendPayload ?? {}).find(
-    (value: any) => value?.disposition === "approval_required",
-  ) as any;
+export const buildSuspendedApprovalResult = (result: WorkflowResult, runId: string): ToolResult => {
+  const payload = (isRecord(result.suspendPayload) ? Object.values(result.suspendPayload) : [])
+    .map(value => ApprovalRequestSchema.safeParse(value))
+    .find(candidate => candidate.success)?.data;
+  if (!payload) throw new Error('Approval workflow suspended without a valid approval request');
   return toolResult.parse({
-    status: "processed",
+    status: 'processed',
     runId,
-    executionStatus: "approval_required",
-    disposition: "approval_required",
+    executionStatus: 'approval_required',
+    disposition: 'approval_required',
     approvalPending: true,
-    reasons: payload?.reasons ?? [],
-    reasonDetails: payload?.reasonDetails ?? [],
-    reviewTypes: payload?.reviewTypes ?? [],
-    signals: payload?.signals ?? [],
-    adaptations: payload?.adaptations ?? [],
+    reasons: payload.reasons,
+    reasonDetails: payload.reasonDetails,
+    reviewTypes: payload.reviewTypes,
+    signals: payload.signals,
+    adaptations: payload.adaptations,
     error: null,
   });
 };
 
-const summarize = async (result: any, runId: string, approvalAttempt = false) => {
-  if (result.status === "suspended") {
+const summarize = async (result: WorkflowResult, runId: string, approvalAttempt = false) => {
+  if (result.status === 'suspended') {
     const output = buildSuspendedApprovalResult(result, runId);
     await recordApKpi({
       ...output,
       recordedAt: new Date().toISOString(),
       postingStatus: null,
       integrationFailure: false,
-      approvalState: "pending",
+      approvalState: 'pending',
     });
     return output;
   }
-  if (result.status !== "success") {
+  if (result.status !== 'success') {
     const output = toolResult.parse({
-      status: "failed",
+      status: 'failed',
       runId,
       executionStatus: null,
       approvalPending: approvalAttempt,
@@ -93,64 +102,55 @@ const summarize = async (result: any, runId: string, approvalAttempt = false) =>
     await recordApKpi({
       ...output,
       recordedAt: new Date().toISOString(),
-      disposition: approvalAttempt ? "approval_required" : null,
+      disposition: approvalAttempt ? 'approval_required' : null,
       postingStatus: null,
       integrationFailure: true,
-      approvalState: approvalAttempt ? "resume_failed" : "not_applicable",
+      approvalState: approvalAttempt ? 'resume_failed' : 'not_applicable',
     });
     return output;
   }
-  const decisions = result.result.decisions as Array<{
-    reasons: Array<{ code: string; message: string; evidence?: Record<string, unknown> }>;
-    reviewType?: string | null;
-    signals?: string[];
-    adaptations?: Array<{ code: string }>;
-  }>;
-  const reasonDetails = decisions.flatMap((decision) => decision.reasons);
+  const workflowResult = Phase3ResultSchema.parse(result.result);
+  const reasonDetails = workflowResult.decisions.flatMap(decision => decision.reasons);
   const output = toolResult.parse({
-    status: "processed",
+    status: 'processed',
     runId,
-    executionStatus: result.result.executionStatus,
-    disposition: result.result.disposition,
+    executionStatus: workflowResult.executionStatus,
+    disposition: workflowResult.disposition,
     approvalPending: false,
-    reasons: reasonDetails.map((reason) => reason.code),
+    reasons: reasonDetails.map(reason => reason.code),
     reasonDetails,
-    reviewTypes: decisions.flatMap((decision) =>
-      decision.reviewType ? [decision.reviewType] : [],
-    ),
-    signals: decisions.flatMap((decision) => decision.signals ?? []),
-    adaptations: decisions.flatMap(
-      (decision) => decision.adaptations?.map((adaptation) => adaptation.code) ?? [],
-    ),
-    error: result.result.postingError,
+    reviewTypes: workflowResult.decisions.flatMap(decision => (decision.reviewType ? [decision.reviewType] : [])),
+    signals: workflowResult.decisions.flatMap(decision => decision.signals),
+    adaptations: workflowResult.decisions.flatMap(decision => decision.adaptations.map(adaptation => adaptation.code)),
+    error: workflowResult.postingError,
   });
   const approvalState =
-    result.result.approval?.status === "approved"
-      ? "approved"
-      : result.result.approval?.status === "rejected"
-        ? "rejected"
-        : "not_applicable";
+    workflowResult.approval.status === 'approved'
+      ? 'approved'
+      : workflowResult.approval.status === 'rejected'
+        ? 'rejected'
+        : 'not_applicable';
   await recordApKpi({
     ...output,
     recordedAt: new Date().toISOString(),
-    disposition: result.result.disposition,
-    postingStatus: result.result.posting?.status ?? null,
+    disposition: workflowResult.disposition,
+    postingStatus: workflowResult.posting?.status ?? null,
     integrationFailure:
-      Boolean(result.result.postingError) ||
-      output.executionStatus === "posting_failed" ||
-      output.executionStatus === "posting_unavailable",
+      Boolean(workflowResult.postingError) ||
+      output.executionStatus === 'posting_failed' ||
+      output.executionStatus === 'posting_unavailable',
     approvalState,
   });
   return output;
 };
 
 const submitInvoice = createTool({
-  id: "submit-invoice-for-processing",
+  id: 'submit-invoice-for-processing',
   description:
-    "Submit fields extracted from one attached invoice into the deterministic AP workflow. Never invent unreadable values.",
+    'Submit fields extracted from one attached invoice into the deterministic AP workflow. Never invent unreadable values.',
   inputSchema: z.object({
-    documentId: z.string().trim().min(1).default("chat-upload"),
-    source: z.enum(["PDF", "image"]).default("PDF"),
+    documentId: z.string().trim().min(1).default('chat-upload'),
+    source: z.enum(['PDF', 'image']).default('PDF'),
     draft: InvoiceDraftSchema,
   }),
   outputSchema: toolResult,
@@ -166,13 +166,13 @@ const submitInvoice = createTool({
         recordedAt: new Date().toISOString(),
         postingStatus: null,
         integrationFailure: false,
-        approvalState: "not_applicable",
+        approvalState: 'not_applicable',
       });
       return output;
     }
-    const document = {
+    const document: DocumentRef = {
       id: documentId,
-      mimeType: source === "PDF" ? "application/pdf" : "image/jpeg",
+      mimeType: source === 'PDF' ? 'application/pdf' : 'image/jpeg',
       source,
       sha256: undefined,
     };
@@ -181,15 +181,13 @@ const submitInvoice = createTool({
       extractedResult: checked.extracted,
       checks: { passed: true, issues: [] },
       reviewerId: null,
-      vendorId: null,
-      poId: null,
       snapshot: { rawDocumentRef: document, extractedResult: checked.extracted },
     };
     const decisionRun = await apDecisionWorkflow.createRun();
     const decision = await decisionRun.start({ inputData: phase1 });
-    if (decision.status !== "success") {
+    if (decision.status !== 'success') {
       const output = toolResult.parse({
-        status: "failed",
+        status: 'failed',
         runId: decisionRun.runId,
         executionStatus: null,
         approvalPending: false,
@@ -205,7 +203,7 @@ const submitInvoice = createTool({
         disposition: null,
         postingStatus: null,
         integrationFailure: true,
-        approvalState: "not_applicable",
+        approvalState: 'not_applicable',
       });
       return output;
     }
@@ -216,9 +214,8 @@ const submitInvoice = createTool({
 });
 
 const resumeApproval = createTool({
-  id: "resolve-invoice-approval",
-  description:
-    "Approve or reject a previously suspended invoice-processing run after reviewing its result.",
+  id: 'resolve-invoice-approval',
+  description: 'Approve or reject a previously suspended invoice-processing run after reviewing its result.',
   inputSchema: z.object({
     runId: z.string().trim().min(1),
     approved: z.boolean(),
@@ -229,7 +226,7 @@ const resumeApproval = createTool({
     const requestContext = context?.requestContext as RequestContext<ReviewerContext> | undefined;
     const run = await apExecutionWorkflow.createRun({ runId });
     const result = await run.resume({
-      step: "approve-invoice",
+      step: 'approve-invoice',
       resumeData: { approved, comment },
       requestContext,
     });
@@ -238,9 +235,9 @@ const resumeApproval = createTool({
 });
 
 export const invoiceChatIntakeAgent = new Agent({
-  id: "accounts-payable-agent",
-  name: "Accounts Payable Agent",
-  model: process.env.INVOICE_READER_MODEL ?? "openai/gpt-5.2",
+  id: 'accounts-payable-agent',
+  name: 'Accounts Payable Agent',
+  model: process.env.INVOICE_READER_MODEL ?? 'openai/gpt-5.2',
   instructions: `An explicit approval or rejection for an existing run takes priority over invoice intake. If the user says approve or reject and supplies a run ID, do not request an attachment: call resolve-invoice-approval exactly once with that run ID, approved true for approval or false for rejection, and the supplied comment if any. That action requires an authenticated reviewer but no invoice attachment.
 
 Otherwise, process one invoice attachment at a time. Read only values visibly printed on the attached PDF, PNG, or JPEG; use null or omit fields that are unreadable. Always include an honest overallConfidence and field-level confidence entries. Name line confidence fields with indexed paths such as lines[0].description, lines[0].qty, and lines[0].unitPrice. A missing PDF text layer alone is not low confidence: judge the visible rendered page. Use low confidence (below 0.8) only for fields that are visually degraded, such as blur, noise, skew, cropping, occlusion, or ambiguous/unreadable characters. Then call submit-invoice-for-processing exactly once with the extracted draft. Never invent vendor IDs, PO IDs, accounting IDs, or values. Report the disposition, review types, all reason details and evidence, and adaptations returned by the tool; do not invent an adaptation. If it reports approvalPending, present the runId and wait for an authenticated reviewer to explicitly approve or reject it; only then call resolve-invoice-approval.`,

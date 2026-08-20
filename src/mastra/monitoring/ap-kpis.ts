@@ -1,6 +1,6 @@
-import { appendFile, mkdir } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { appendFile, mkdir } from 'node:fs/promises';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 export type ApKpiEvent = {
   runId: string | null;
@@ -14,12 +14,12 @@ export type ApKpiEvent = {
   postingStatus: string | null;
   integrationFailure: boolean;
   approvalPending: boolean;
-  approvalState: "not_applicable" | "pending" | "approved" | "rejected" | "resume_failed";
+  approvalState: 'not_applicable' | 'pending' | 'approved' | 'rejected' | 'resume_failed';
 };
 
 export const apKpiLogPath = () =>
   process.env.AP_KPI_LOG_PATH?.trim() ||
-  resolve(fileURLToPath(new URL("../../../", import.meta.url)), "data/ap-kpis.ndjson");
+  resolve(fileURLToPath(new URL('../../../', import.meta.url)), 'data/ap-kpis.ndjson');
 export async function recordApKpi(event: ApKpiEvent) {
   try {
     const path = apKpiLogPath();
@@ -27,7 +27,7 @@ export async function recordApKpi(event: ApKpiEvent) {
     await appendFile(path, `${JSON.stringify(event)}\n`, { mode: 0o600 });
     return true;
   } catch (error) {
-    console.error("AP KPI persistence failed; financial workflow result is unchanged", error);
+    console.error('AP KPI persistence failed; financial workflow result is unchanged', error);
     return false;
   }
 }

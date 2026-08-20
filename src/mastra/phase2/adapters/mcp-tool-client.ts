@@ -1,9 +1,9 @@
-import { isAbsolute } from "node:path";
-import { existsSync, statSync } from "node:fs";
-import { createObservabilityContext } from "@mastra/core/observability";
-import { RequestContext } from "@mastra/core/request-context";
-import { noopObserve } from "@mastra/core/tools";
-import { MCPClient } from "@mastra/mcp";
+import { isAbsolute } from 'node:path';
+import { existsSync, statSync } from 'node:fs';
+import { createObservabilityContext } from '@mastra/core/observability';
+import { RequestContext } from '@mastra/core/request-context';
+import { noopObserve } from '@mastra/core/tools';
+import { MCPClient } from '@mastra/mcp';
 
 export interface McpToolClient {
   listToolNames(): Promise<Set<string>>;
@@ -23,9 +23,7 @@ export class MastraMcpToolClient implements McpToolClient {
   async listToolNames() {
     const prefix = `${this.serverName}_`;
     return new Set(
-      Object.keys(await this.getTools()).map((name) =>
-        name.startsWith(prefix) ? name.slice(prefix.length) : name,
-      ),
+      Object.keys(await this.getTools()).map(name => (name.startsWith(prefix) ? name.slice(prefix.length) : name)),
     );
   }
   async call(toolName: string, input: unknown) {
@@ -50,31 +48,29 @@ const requiredPath = (name: string) => {
   return value;
 };
 
-export function createQuickBooksMcpToolClient(
-  options: { enablePosting?: boolean } = {},
-): McpToolClient {
-  const serverPath = requiredPath("QBO_MCP_SERVER_PATH"),
-    tokenStorePath = requiredPath("QBO_MCP_TOKEN_STORE_PATH");
+export function createQuickBooksMcpToolClient(options: { enablePosting?: boolean } = {}): McpToolClient {
+  const serverPath = requiredPath('QBO_MCP_SERVER_PATH'),
+    tokenStorePath = requiredPath('QBO_MCP_TOKEN_STORE_PATH');
   const allowedTools = new Set([
-    "search_vendors",
-    "search_purchase_orders",
-    "search_bills",
-    ...(options.enablePosting ? ["create-bill"] : []),
+    'search_vendors',
+    'search_purchase_orders',
+    'search_bills',
+    ...(options.enablePosting ? ['create-bill'] : []),
   ]);
   const client = new MCPClient({
-    id: "quickbooks-accounting",
+    id: 'quickbooks-accounting',
     servers: {
       quickbooks: {
         command: process.execPath,
         args: [serverPath],
         env: {
           QUICKBOOKS_TOKEN_STORE_PATH: tokenStorePath,
-          QUICKBOOKS_DISABLE_WRITE: options.enablePosting ? "false" : "true",
-          QUICKBOOKS_DISABLE_UPDATE: "true",
-          QUICKBOOKS_DISABLE_DELETE: "true",
+          QUICKBOOKS_DISABLE_WRITE: options.enablePosting ? 'false' : 'true',
+          QUICKBOOKS_DISABLE_UPDATE: 'true',
+          QUICKBOOKS_DISABLE_DELETE: 'true',
         },
       },
     },
   });
-  return new MastraMcpToolClient(client, "quickbooks", allowedTools);
+  return new MastraMcpToolClient(client, 'quickbooks', allowedTools);
 }
