@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "description": "A deterministic accounts-payable workflow with invoice extraction, vendor and PO controls, approval gates, monitoring, and optional QuickBooks posting.",
   "private": true,
+  "license": "Apache-2.0",
   "type": "module",
   "engines": {
     "node": ">=22.13.0"
@@ -22,19 +23,19 @@
     "qbo-mcp:verify": "tsx src/scripts/verify-qbo-mcp.ts"
   },
   "dependencies": {
-    "@mastra/core": "^1.58.0",
-    "@mastra/duckdb": "^1.6.1",
-    "@mastra/libsql": "1.19.0",
-    "@mastra/mcp": "1.16.0",
-    "@mastra/observability": "^1.16.6",
+    "@mastra/core": "latest",
+    "@mastra/duckdb": "latest",
+    "@mastra/libsql": "latest",
+    "@mastra/mcp": "latest",
+    "@mastra/observability": "latest",
     "currency-codes": "2.2.0",
     "decimal.js": "10.6.0",
     "dotenv": "16.6.1",
-    "mastra": "1.23.0",
     "zod": "3.25.76"
   },
   "devDependencies": {
     "@types/node": "22.15.3",
+    "mastra": "latest",
     "tsx": "4.19.4",
     "typescript": "5.8.3"
   }

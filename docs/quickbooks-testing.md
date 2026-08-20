@@ -1,6 +1,8 @@
 # Live QuickBooks Sandbox Invoice Test Pack
 
-Create one PDF per case below and upload it to **Invoice chat intake agent** in Mastra Studio.
+This checklist is only needed when testing the optional QuickBooks integration. The default Studio demo uses local fixtures and does not require QuickBooks credentials.
+
+Create one PDF per case below and upload it to **Accounts Payable Agent** in Mastra Studio.
 
 ## Before testing
 
