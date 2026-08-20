@@ -14,6 +14,7 @@ import {
   authConfigurationError,
   getCurrentApUser,
   isLocalFixtureDemo,
+  serverHost,
   setAuthenticatedReviewer,
 } from "./auth.ts";
 import { apExecutionWorkflow } from "./phase3/workflow.ts";
@@ -64,6 +65,7 @@ export const mastra = new Mastra({
     },
   }),
   server: {
+    host: serverHost,
     ...(apAuth ? { auth: apAuth } : {}),
     middleware: [
       {

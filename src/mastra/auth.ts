@@ -1,9 +1,22 @@
 import { RequestContext } from "@mastra/core/request-context";
 import { SimpleAuth } from "@mastra/core/server";
+import { isIP } from "node:net";
 
 export type ApUser = { id: string; name: string; role: "ap_approver" | "viewer" };
 const configuredToken = process.env.MASTRA_AUTH_TOKEN?.trim(),
   configuredUserId = process.env.MASTRA_AUTH_USER_ID?.trim();
+
+export const serverHost = process.env.MASTRA_HOST?.trim() || "127.0.0.1";
+
+export function isLoopbackHost(host: string) {
+  const normalized = host.trim().toLowerCase();
+  return (
+    normalized === "localhost" ||
+    normalized === "::1" ||
+    normalized === "[::1]" ||
+    (isIP(normalized) === 4 && normalized.startsWith("127."))
+  );
+}
 
 export const authConfigurationError =
   Boolean(configuredToken) !== Boolean(configuredUserId)
@@ -19,6 +32,7 @@ export function isLocalFixtureDemo() {
     !configuredToken &&
     !configuredUserId &&
     isDevelopment &&
+    isLoopbackHost(serverHost) &&
     (process.env.ACCOUNTING_PROVIDER?.trim() || "fixture") === "fixture"
   );
 }

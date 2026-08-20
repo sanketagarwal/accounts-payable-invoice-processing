@@ -12,6 +12,8 @@
     "dev": "mastra dev",
     "build": "mastra build",
     "start": "mastra start",
+    "format": "oxfmt . '!**/.github/**'",
+    "format:check": "oxfmt --check . '!**/.github/**'",
     "typecheck": "tsc --noEmit",
     "test": "INVOICE_READER=fixture ACCOUNTING_PROVIDER=fixture SANCTIONS_SCREENING= QBO_MCP_ENABLE_POSTING=false MASTRA_OBSERVABILITY_DB_PATH=:memory: tsx src/scripts/test.ts",
     "fixtures:run": "INVOICE_READER=fixture tsx src/scripts/run-fixtures.ts",
@@ -36,6 +38,7 @@
   "devDependencies": {
     "@types/node": "^22.0.0",
     "mastra": "latest",
+    "oxfmt": "^0.59.0",
     "tsx": "4.19.4",
     "typescript": "^5.9.3"
   },

@@ -3,7 +3,7 @@ import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { RequestContext } from "@mastra/core/request-context";
 import { defaultStoragePath, mastra } from "../mastra/index.ts";
-import { setAuthenticatedReviewer } from "../mastra/auth.ts";
+import { isLoopbackHost, setAuthenticatedReviewer } from "../mastra/auth.ts";
 import {
   detectMediaType,
   invoiceReader,
@@ -50,6 +50,14 @@ import {
   buildSuspendedApprovalResult,
 } from "../mastra/agents/invoice-chat-intake.ts";
 import { invoiceFixtures, runFixture } from "./support.ts";
+
+assert.equal(isLoopbackHost("127.0.0.1"), true);
+assert.equal(isLoopbackHost("127.20.30.40"), true);
+assert.equal(isLoopbackHost("localhost"), true);
+assert.equal(isLoopbackHost("::1"), true);
+assert.equal(isLoopbackHost("0.0.0.0"), false);
+assert.equal(isLoopbackHost("192.168.1.10"), false);
+assert.equal(isLoopbackHost("127.0.0.1.example.com"), false);
 
 for (const fixture of invoiceFixtures) {
   const run = await runFixture(fixture);
