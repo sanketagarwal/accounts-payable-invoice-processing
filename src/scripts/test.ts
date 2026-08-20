@@ -1026,7 +1026,7 @@ try {
   assert.throws(() => signAssessment({ disposition: 'auto_post' }), /server-only AP_ASSESSMENT_SIGNING_KEY/);
 
   process.env.MASTRA_HOST = '127.0.0.1';
-  process.env.MASTRA_AUTH_TOKEN = 'known-studio-token';
+  process.env.MASTRA_AUTH_TOKEN = 'known-studio-token-with-at-least-32-characters';
   process.env.MASTRA_AUTH_USER_ID = 'known-studio-user';
   assert.throws(() => signAssessment({ disposition: 'auto_post' }), /server-only AP_ASSESSMENT_SIGNING_KEY/);
 
@@ -1043,11 +1043,13 @@ try {
   }
 
   process.env.ACCOUNTING_PROVIDER = 'fixture';
-  process.env.MASTRA_AUTH_TOKEN = 'known-studio-token';
+  process.env.MASTRA_AUTH_TOKEN = 'known-studio-token-with-at-least-32-characters';
   process.env.MASTRA_AUTH_USER_ID = 'known-studio-user';
   process.env.AP_ASSESSMENT_SIGNING_KEY = 'replace-with-a-long-random-secret';
   assert.throws(() => signAssessment({ disposition: 'auto_post' }), /server-only AP_ASSESSMENT_SIGNING_KEY/);
   process.env.AP_ASSESSMENT_SIGNING_KEY = 'local-development-assessment-key';
+  assert.throws(() => signAssessment({ disposition: 'auto_post' }), /server-only AP_ASSESSMENT_SIGNING_KEY/);
+  process.env.AP_ASSESSMENT_SIGNING_KEY = process.env.MASTRA_AUTH_TOKEN;
   assert.throws(() => signAssessment({ disposition: 'auto_post' }), /server-only AP_ASSESSMENT_SIGNING_KEY/);
   process.env.AP_ASSESSMENT_SIGNING_KEY = 'a-real-server-only-signing-key-with-32-characters';
   assert.doesNotThrow(() => signAssessment({ disposition: 'auto_post' }));
