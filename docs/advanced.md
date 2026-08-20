@@ -151,11 +151,11 @@ The adapter converts MCP text/JSON into canonical Zod-validated records. Intuit'
 Posting is disabled unless it is explicitly enabled with QuickBooks internal account IDs:
 
 ```bash
-QBO_MCP_ENABLE_POSTING=true
-QBO_MCP_SINGLE_WRITER=true
-QBO_MCP_EXPENSE_ACCOUNT_ID=your-expense-account-id
-QBO_MCP_TAX_ACCOUNT_ID=your-tax-account-id # required for invoices containing tax
-QBO_MCP_AP_ACCOUNT_ID=your-ap-account-id    # optional
+export QBO_MCP_ENABLE_POSTING=true
+export QBO_MCP_SINGLE_WRITER=true
+export QBO_MCP_EXPENSE_ACCOUNT_ID=your-expense-account-id
+export QBO_MCP_TAX_ACCOUNT_ID=your-tax-account-id # required for invoices containing tax
+export QBO_MCP_AP_ACCOUNT_ID=your-ap-account-id    # optional
 npm run qbo-mcp:verify
 ```
 
