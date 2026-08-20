@@ -27,11 +27,9 @@ export const authConfigurationError =
 export function isLocalFixtureDemo() {
   const authToken = process.env.MASTRA_AUTH_TOKEN?.trim(),
     authUserId = process.env.MASTRA_AUTH_USER_ID?.trim(),
-    host = process.env.MASTRA_HOST?.trim() || '127.0.0.1';
-  const isDevelopment =
-    process.env.MASTRA_DEV === 'true' ||
-    process.env.MASTRA_DEV === '1' ||
-    (process.env.NODE_ENV !== 'production' && process.env.NODE_ENV !== 'prod');
+    host = process.env.MASTRA_HOST?.trim() || '127.0.0.1',
+    nodeEnvironment = process.env.NODE_ENV?.trim().toLowerCase(),
+    isDevelopment = nodeEnvironment !== 'production' && nodeEnvironment !== 'prod';
   return (
     !authToken &&
     !authUserId &&

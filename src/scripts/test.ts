@@ -1030,6 +1030,21 @@ try {
   process.env.MASTRA_AUTH_USER_ID = 'known-studio-user';
   assert.throws(() => signAssessment({ disposition: 'auto_post' }), /server-only AP_ASSESSMENT_SIGNING_KEY/);
 
+  delete process.env.MASTRA_AUTH_TOKEN;
+  delete process.env.MASTRA_AUTH_USER_ID;
+  process.env.NODE_ENV = 'production';
+  process.env.MASTRA_DEV = 'true';
+  assert.throws(() => signAssessment({ disposition: 'auto_post' }), /server-only AP_ASSESSMENT_SIGNING_KEY/);
+
+  process.env.NODE_ENV = 'development';
+  for (const provider of ['quickbooks', 'quickbooks-mcp', 'custom-provider']) {
+    process.env.ACCOUNTING_PROVIDER = provider;
+    assert.throws(() => signAssessment({ disposition: 'auto_post' }), /server-only AP_ASSESSMENT_SIGNING_KEY/);
+  }
+
+  process.env.ACCOUNTING_PROVIDER = 'fixture';
+  process.env.MASTRA_AUTH_TOKEN = 'known-studio-token';
+  process.env.MASTRA_AUTH_USER_ID = 'known-studio-user';
   process.env.AP_ASSESSMENT_SIGNING_KEY = 'replace-with-a-long-random-secret';
   assert.throws(() => signAssessment({ disposition: 'auto_post' }), /server-only AP_ASSESSMENT_SIGNING_KEY/);
   process.env.AP_ASSESSMENT_SIGNING_KEY = 'local-development-assessment-key';

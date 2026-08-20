@@ -104,15 +104,18 @@ Invalid providers and missing required capabilities fail during startup. A disab
 ### QuickBooks sandbox
 
 ```bash
-ACCOUNTING_PROVIDER=quickbooks
-QBO_REALM_ID=your-sandbox-company-id
-QBO_ACCESS_TOKEN=your-oauth-access-token
-QBO_BASE_URL=https://sandbox-quickbooks.api.intuit.com
-SANCTIONS_SCREENING=fixture
+export MASTRA_AUTH_TOKEN="$(openssl rand -hex 32)"
+export MASTRA_AUTH_USER_ID=quickbooks-reviewer
+export AP_ASSESSMENT_SIGNING_KEY="$(openssl rand -hex 32)"
+export ACCOUNTING_PROVIDER=quickbooks
+export QBO_REALM_ID=your-sandbox-company-id
+export QBO_ACCESS_TOKEN=your-oauth-access-token
+export QBO_BASE_URL=https://sandbox-quickbooks.api.intuit.com
+export SANCTIONS_SCREENING=fixture
 npm run dev
 ```
 
-`SANCTIONS_SCREENING=fixture` is an explicit demo-only fallback. Replace it with a real standalone `SanctionsScreener` in production. Without a provider sanctions port or an explicitly configured fallback, startup fails.
+Keep `MASTRA_AUTH_TOKEN` available for Studio or API authentication. `SANCTIONS_SCREENING=fixture` is an explicit demo-only fallback. Replace it with a real standalone `SanctionsScreener` in production. Without a provider sanctions port or an explicitly configured fallback, startup fails.
 
 QuickBooks has no goods-receipt port here, so matching visibly degrades to two-way and emits `GOODS_RECEIPTS_UNAVAILABLE`. It also emits `VENDOR_BANK_DETAILS_UNAVAILABLE`, `VENDOR_STATUS_BINARY`, and the `payment_details_unverifiable` signal where applicable.
 
@@ -132,10 +135,13 @@ npm run auth
 Then configure this template with absolute paths:
 
 ```bash
-ACCOUNTING_PROVIDER=quickbooks-mcp
-QBO_MCP_SERVER_PATH=/absolute/path/quickbooks-online-mcp-server/dist/index.js
-QBO_MCP_TOKEN_STORE_PATH=/absolute/path/quickbooks-online-mcp-server/.env
-SANCTIONS_SCREENING=fixture
+export MASTRA_AUTH_TOKEN="$(openssl rand -hex 32)"
+export MASTRA_AUTH_USER_ID=quickbooks-reviewer
+export AP_ASSESSMENT_SIGNING_KEY="$(openssl rand -hex 32)"
+export ACCOUNTING_PROVIDER=quickbooks-mcp
+export QBO_MCP_SERVER_PATH=/absolute/path/quickbooks-online-mcp-server/dist/index.js
+export QBO_MCP_TOKEN_STORE_PATH=/absolute/path/quickbooks-online-mcp-server/.env
+export SANCTIONS_SCREENING=fixture
 npm run qbo-mcp:verify
 npm run dev
 ```

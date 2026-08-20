@@ -7,15 +7,18 @@ This checklist is only for the optional QuickBooks integration. The default Stud
 For read-only vendor, PO, and bill-history access:
 
 ```bash
-ACCOUNTING_PROVIDER=quickbooks
-QBO_REALM_ID=your-sandbox-company-id
-QBO_ACCESS_TOKEN=your-oauth-access-token
-QBO_BASE_URL=https://sandbox-quickbooks.api.intuit.com
-SANCTIONS_SCREENING=fixture
+export MASTRA_AUTH_TOKEN="$(openssl rand -hex 32)"
+export MASTRA_AUTH_USER_ID=quickbooks-reviewer
+export AP_ASSESSMENT_SIGNING_KEY="$(openssl rand -hex 32)"
+export ACCOUNTING_PROVIDER=quickbooks
+export QBO_REALM_ID=your-sandbox-company-id
+export QBO_ACCESS_TOKEN=your-oauth-access-token
+export QBO_BASE_URL=https://sandbox-quickbooks.api.intuit.com
+export SANCTIONS_SCREENING=fixture
 npm run dev
 ```
 
-The fixture sanctions screener is for demos only. Bind a real `SanctionsScreener` before using production data.
+Keep `MASTRA_AUTH_TOKEN` available for Studio or API authentication. The fixture sanctions screener is for demos only. Bind a real `SanctionsScreener` before using production data.
 
 To test Bill creation through Intuit's MCP server, complete the [MCP setup](./advanced.md#intuit-quickbooks-mcp-server). Posting remains disabled until you explicitly enable it and supply QuickBooks account IDs.
 
