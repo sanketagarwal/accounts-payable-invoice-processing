@@ -9,7 +9,13 @@ import { LibSQLStore } from "@mastra/libsql";
 import { MastraStorageExporter, Observability } from "@mastra/observability";
 import { invoiceExtractionAgent } from "./agents/invoice-extraction.ts";
 import { invoiceChatIntakeAgent } from "./agents/invoice-chat-intake.ts";
-import { apAuth, setAuthenticatedReviewer } from "./auth.ts";
+import {
+  apAuth,
+  authConfigurationError,
+  getCurrentApUser,
+  isLocalFixtureDemo,
+  setAuthenticatedReviewer,
+} from "./auth.ts";
 import { apExecutionWorkflow } from "./phase3/workflow.ts";
 import { extractionFidelityScorer } from "./scorers/extraction-fidelity.ts";
 import { invoiceReaderWorkflow } from "./workflows/invoice-reader.ts";
@@ -58,15 +64,22 @@ export const mastra = new Mastra({
     },
   }),
   server: {
-    auth: apAuth,
+    ...(apAuth ? { auth: apAuth } : {}),
     middleware: [
       {
         path: "/api/*",
         handler: async (context, next) => {
-          setAuthenticatedReviewer(
-            context.get("requestContext"),
-            await apAuth.getCurrentUser(context.req.raw),
-          );
+          const user = await getCurrentApUser(context.req.raw);
+          if (!user && !isLocalFixtureDemo())
+            return context.json(
+              {
+                error:
+                  authConfigurationError ||
+                  "Configure MASTRA_AUTH_TOKEN and MASTRA_AUTH_USER_ID to use the API outside the local fixture demo",
+              },
+              401,
+            );
+          setAuthenticatedReviewer(context.get("requestContext"), user);
           await next();
         },
       },

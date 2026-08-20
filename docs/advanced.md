@@ -40,7 +40,7 @@ Open the URL printed by `mastra dev`, select `apInvoiceWorkflow`, and start it w
 
 The workflow uses local fixtures by default, so this path needs no model or accounting-system credentials. Select `invoiceReaderWorkflow` to inspect Phase 1 alone. The intermediate decision workflow is internal; it is not registered as a directly startable Studio/API workflow. The execution workflow is registered only so approval snapshots can be resumed, and it accepts assessments signed by the deterministic decision workflow. Use the chat intake agent or `apInvoiceWorkflow` for the complete trusted-document path. Set a random, server-only `AP_ASSESSMENT_SIGNING_KEY` of at least 32 characters in every non-local deployment (for example, generate one with `openssl rand -hex 32`). It must be independent of `MASTRA_AUTH_TOKEN`, which Studio/API users may know; assessment signing refuses to run in production or with QuickBooks posting enabled when the dedicated key is absent, too short, or the documented placeholder.
 
-Studio protects its API with the local `SimpleAuth` credentials in `.env.example`. Sign in with any email and use `MASTRA_AUTH_TOKEN` as the password. The example token is for localhost only; production startup requires explicit credentials, and a deployed template should replace `SimpleAuth` with its JWT/SSO provider.
+The non-production fixture demo opens Studio without a login and assigns a fixed local reviewer so the approval flow works immediately. This mode is for localhost only. Set both `MASTRA_AUTH_TOKEN` and `MASTRA_AUTH_USER_ID` to enable `SimpleAuth`; production and non-fixture providers deny API requests without them. A deployed template should replace `SimpleAuth` with its JWT/SSO provider.
 
 ## Phase 1: trusted reader
 
@@ -72,7 +72,7 @@ await run.resume({
 
 For the standalone `invoiceReaderWorkflow`, `step: 'verify-invoice'` is also valid. If more suspension points are added later, pass the nested path returned in the run's `suspended` array.
 
-The server middleware deletes any caller-provided `reviewerId` and replaces it from the authenticated approver. A viewer or unauthenticated caller cannot authorize a resume. Direct, in-process workflow calls must similarly construct request context only from their trusted authentication layer.
+The server middleware deletes any caller-provided `reviewerId` and replaces it from the trusted reviewer identity. Outside the explicitly local fixture demo, a viewer or unauthenticated caller cannot authorize a resume. Direct, in-process workflow calls must similarly construct request context only from their trusted authentication layer.
 
 Reference resolution happens after review, so corrected vendor names and PO numbers map to fresh `vendorId` and `poId` values. The resolver is deliberately mocked and does not make a vendor-validity decision.
 

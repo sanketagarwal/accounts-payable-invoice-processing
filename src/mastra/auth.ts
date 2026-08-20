@@ -4,24 +4,50 @@ import { SimpleAuth } from "@mastra/core/server";
 export type ApUser = { id: string; name: string; role: "ap_approver" | "viewer" };
 const configuredToken = process.env.MASTRA_AUTH_TOKEN?.trim(),
   configuredUserId = process.env.MASTRA_AUTH_USER_ID?.trim();
-if (
-  process.env.NODE_ENV === "production" &&
-  (!configuredToken || !configuredUserId || configuredToken === "local-development-token")
-)
-  throw new Error(
-    "Non-default MASTRA_AUTH_TOKEN and MASTRA_AUTH_USER_ID are required in production",
-  );
 
-export const apAuth = new SimpleAuth<ApUser>({
-  tokens: {
-    [configuredToken || "local-development-token"]: {
-      id: configuredUserId || "local-reviewer",
-      name: configuredUserId || "Local reviewer",
+export const authConfigurationError =
+  Boolean(configuredToken) !== Boolean(configuredUserId)
+    ? "Set both MASTRA_AUTH_TOKEN and MASTRA_AUTH_USER_ID, or leave both unset"
+    : undefined;
+
+export function isLocalFixtureDemo() {
+  const isDevelopment =
+    process.env.MASTRA_DEV === "true" ||
+    process.env.MASTRA_DEV === "1" ||
+    (process.env.NODE_ENV !== "production" && process.env.NODE_ENV !== "prod");
+  return (
+    !configuredToken &&
+    !configuredUserId &&
+    isDevelopment &&
+    (process.env.ACCOUNTING_PROVIDER?.trim() || "fixture") === "fixture"
+  );
+}
+
+export const apAuth =
+  configuredToken && configuredUserId
+    ? new SimpleAuth<ApUser>({
+        tokens: {
+          [configuredToken]: {
+            id: configuredUserId,
+            name: configuredUserId,
+            role: "ap_approver",
+          },
+        },
+        protected: ["/api/*"],
+      })
+    : undefined;
+
+export async function getCurrentApUser(request: Request): Promise<ApUser | null> {
+  if (apAuth) return apAuth.getCurrentUser(request);
+  if (isLocalFixtureDemo())
+    return {
+      id: "local-reviewer",
+      name: "Local reviewer",
       role: "ap_approver",
-    },
-  },
-  protected: ["/api/*"],
-});
+    };
+  return null;
+}
+
 export function setAuthenticatedReviewer(requestContext: RequestContext<any>, user: ApUser | null) {
   requestContext.delete("reviewerId");
   if (user?.role === "ap_approver") requestContext.set("reviewerId", user.id);
