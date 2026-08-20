@@ -1,13 +1,10 @@
 {
   "name": "accounts-payable-invoice-processing",
   "version": "0.1.0",
-  "description": "A deterministic accounts-payable workflow with invoice extraction, vendor and PO controls, approval gates, monitoring, and optional QuickBooks posting.",
   "private": true,
+  "description": "A deterministic accounts-payable workflow with invoice extraction, vendor and PO controls, approval gates, monitoring, and optional QuickBooks posting.",
   "license": "Apache-2.0",
   "type": "module",
-  "engines": {
-    "node": ">=22.13.0"
-  },
   "scripts": {
     "dev": "mastra dev",
     "build": "mastra build",
@@ -38,5 +35,8 @@
     "mastra": "latest",
     "tsx": "4.19.4",
     "typescript": "5.8.3"
+  },
+  "engines": {
+    "node": ">=22.13.0"
   }
 }

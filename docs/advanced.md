@@ -67,7 +67,7 @@ Resume the primary `apInvoiceWorkflow` with corrected data, and supply the revie
 await run.resume({
   resumeData: { extracted: correctedInvoice },
   requestContext, // reviewerId is populated here by trusted auth middleware
-})
+});
 ```
 
 For the standalone `invoiceReaderWorkflow`, `step: 'verify-invoice'` is also valid. If more suspension points are added later, pass the nested path returned in the run's `suspended` array.
@@ -92,12 +92,12 @@ Select one globally at Mastra startup:
 ACCOUNTING_PROVIDER=fixture
 ```
 
-| Provider | Vendors | POs | Receipts | Bill seed | Posting | Bank details | Status | Sanctions |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `fixture` | yes | yes | yes | yes | yes | yes | full | yes |
-| `quickbooks` | yes | yes | no | yes | no | no | binary | no |
-| `quickbooks-mcp` | yes | yes* | no | yes | opt-in | no | binary | no |
-| `connector` | stub | stub | stub | stub | stub | stub | stub | stub |
+| Provider         | Vendors | POs  | Receipts | Bill seed | Posting | Bank details | Status | Sanctions |
+| ---------------- | ------- | ---- | -------- | --------- | ------- | ------------ | ------ | --------- |
+| `fixture`        | yes     | yes  | yes      | yes       | yes     | yes          | full   | yes       |
+| `quickbooks`     | yes     | yes  | no       | yes       | no      | no           | binary | no        |
+| `quickbooks-mcp` | yes     | yes* | no       | yes       | opt-in  | no           | binary | no        |
+| `connector`      | stub    | stub | stub     | stub      | stub    | stub         | stub   | stub      |
 
 Invalid providers and missing required capabilities fail during startup. A disabled capability means its port is absent—it never silently returns an empty result.
 
@@ -161,9 +161,9 @@ The workflow—not the model—calls only `create-bill`; the MCP client allowlis
 
 ```ts
 await run.resume({
-  resumeData: { approved: true, comment: 'Reviewed against contract' },
+  resumeData: { approved: true, comment: "Reviewed against contract" },
   requestContext, // trusted middleware supplies reviewerId
-})
+});
 ```
 
 A rejection finishes without writing. Review, blocked, retry, and extraction-verification outcomes are never postable. The final result records `executionStatus`, immutable approval evidence, and the external bill receipt or a visible posting error.
@@ -186,15 +186,15 @@ To verify a successful post in the QuickBooks sandbox, open **Expenses & bills �
 
 ```ts
 const provider = makeCompositeProvider({
-  id: 'qbo-receiving',
-  displayName: 'QuickBooks + receiving',
+  id: "qbo-receiving",
+  displayName: "QuickBooks + receiving",
   vendors: quickbooksProvider,
   purchaseOrders: quickbooksProvider,
   goodsReceipts: receivingProvider,
   sanctions: sanctionsProvider,
   billHistory: quickbooksProvider,
   identity: { crosswalk },
-})
+});
 ```
 
 ### MCP and connector-based accounting software

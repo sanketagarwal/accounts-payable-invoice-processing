@@ -14,11 +14,11 @@ Create one PDF per case below and upload it to **Accounts Payable Agent** in Mas
 
 ## Existing sandbox data
 
-| PO | Vendor | Currency | Lines | Total |
-| --- | --- | --- | --- | ---: |
-| `1002` | Tim Philip Masonry | USD | SKU `5`, Rock Fountain, 1 × 125.00 | 125.00 |
-| `1003` | Hicks Hardware | USD | SKU `5`, Rock Fountain, 1 × 125.00; SKU `16`, Sprinkler Heads, 15 × 0.75; SKU `17`, Sprinkler Pipes, 25 × 2.50; SKU `11`, Fountain Pump, 3 × 10.00 | 228.75 |
-| `1004` | Norton Lumber and Building Materials | USD | SKU `11`, Fountain Pump, 8 × 10.00; SKU `5`, Rock Fountain, 1 × 125.00 | 205.00 |
+| PO     | Vendor                               | Currency | Lines                                                                                                                                              |  Total |
+| ------ | ------------------------------------ | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | -----: |
+| `1002` | Tim Philip Masonry                   | USD      | SKU `5`, Rock Fountain, 1 × 125.00                                                                                                                 | 125.00 |
+| `1003` | Hicks Hardware                       | USD      | SKU `5`, Rock Fountain, 1 × 125.00; SKU `16`, Sprinkler Heads, 15 × 0.75; SKU `17`, Sprinkler Pipes, 25 × 2.50; SKU `11`, Fountain Pump, 3 × 10.00 | 228.75 |
+| `1004` | Norton Lumber and Building Materials | USD      | SKU `11`, Fountain Pump, 8 × 10.00; SKU `5`, Rock Fountain, 1 × 125.00                                                                             | 205.00 |
 
 ## Base PDF layout
 
@@ -313,12 +313,12 @@ Expected: lookup failures route as retryable/unknown rather than a false vendor 
 
 ## Cases intentionally not represented by a PDF alone
 
-| Case | Required sandbox/config action |
-| --- | --- |
-| 2 | Create PO `AP-9000` first. |
-| 6 | Create and deactivate a test vendor and matching PO. |
-| 7 | QBO/provider limitation; exact duplicate names are not a reliable live setup. |
-| 15, 16, 22 | First create a Bill via the first upload. |
-| 18 | Needs a new structuring-anomaly feature. |
-| 19 | Needs requester identity plus segregation-of-duties feature. |
-| 23 | Revoke/invalidates OAuth/MCP token. |
+| Case       | Required sandbox/config action                                                |
+| ---------- | ----------------------------------------------------------------------------- |
+| 2          | Create PO `AP-9000` first.                                                    |
+| 6          | Create and deactivate a test vendor and matching PO.                          |
+| 7          | QBO/provider limitation; exact duplicate names are not a reliable live setup. |
+| 15, 16, 22 | First create a Bill via the first upload.                                     |
+| 18         | Needs a new structuring-anomaly feature.                                      |
+| 19         | Needs requester identity plus segregation-of-duties feature.                  |
+| 23         | Revoke/invalidates OAuth/MCP token.                                           |
