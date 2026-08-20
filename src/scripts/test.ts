@@ -456,6 +456,8 @@ const priorPostingFlag = process.env.QBO_MCP_ENABLE_POSTING,
   priorExpenseAccount = process.env.QBO_MCP_EXPENSE_ACCOUNT_ID,
   priorSingleWriter = process.env.QBO_MCP_SINGLE_WRITER;
 try {
+  process.env.QBO_MCP_ENABLE_POSTING = 'enabled';
+  assert.throws(() => makeQuickBooksMcpProvider(postingMcp), /QBO_MCP_ENABLE_POSTING must be true or false/);
   process.env.QBO_MCP_ENABLE_POSTING = 'true';
   delete process.env.QBO_MCP_EXPENSE_ACCOUNT_ID;
   delete process.env.QBO_MCP_SINGLE_WRITER;
