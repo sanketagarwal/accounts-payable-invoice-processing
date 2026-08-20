@@ -25,15 +25,18 @@ export const authConfigurationError =
     : undefined;
 
 export function isLocalFixtureDemo() {
+  const authToken = process.env.MASTRA_AUTH_TOKEN?.trim(),
+    authUserId = process.env.MASTRA_AUTH_USER_ID?.trim(),
+    host = process.env.MASTRA_HOST?.trim() || '127.0.0.1';
   const isDevelopment =
     process.env.MASTRA_DEV === 'true' ||
     process.env.MASTRA_DEV === '1' ||
     (process.env.NODE_ENV !== 'production' && process.env.NODE_ENV !== 'prod');
   return (
-    !configuredToken &&
-    !configuredUserId &&
+    !authToken &&
+    !authUserId &&
     isDevelopment &&
-    isLoopbackHost(serverHost) &&
+    isLoopbackHost(host) &&
     (process.env.ACCOUNTING_PROVIDER?.trim() || 'fixture') === 'fixture'
   );
 }

@@ -999,25 +999,49 @@ const forgedResult = await forgedExecution
     console.error = originalConsoleError;
   });
 assert.equal(forgedResult.status, 'failed');
-const priorAssessmentKey = process.env.AP_ASSESSMENT_SIGNING_KEY,
-  priorAuthToken = process.env.MASTRA_AUTH_TOKEN,
-  priorSigningPosting = process.env.QBO_MCP_ENABLE_POSTING;
+const signingEnvironmentKeys = [
+    'AP_ASSESSMENT_SIGNING_KEY',
+    'MASTRA_AUTH_TOKEN',
+    'MASTRA_AUTH_USER_ID',
+    'MASTRA_HOST',
+    'MASTRA_DEV',
+    'NODE_ENV',
+    'ACCOUNTING_PROVIDER',
+  ] as const,
+  priorSigningEnvironment = Object.fromEntries(signingEnvironmentKeys.map(key => [key, process.env[key]])) as Record<
+    (typeof signingEnvironmentKeys)[number],
+    string | undefined
+  >;
 try {
   delete process.env.AP_ASSESSMENT_SIGNING_KEY;
-  process.env.MASTRA_AUTH_TOKEN = 'known-studio-token';
-  process.env.QBO_MCP_ENABLE_POSTING = 'true';
+  delete process.env.MASTRA_AUTH_TOKEN;
+  delete process.env.MASTRA_AUTH_USER_ID;
+  process.env.MASTRA_HOST = '127.0.0.1';
+  process.env.MASTRA_DEV = 'true';
+  process.env.NODE_ENV = 'development';
+  process.env.ACCOUNTING_PROVIDER = 'fixture';
+  assert.doesNotThrow(() => signAssessment({ disposition: 'auto_post' }));
+
+  process.env.MASTRA_HOST = '0.0.0.0';
   assert.throws(() => signAssessment({ disposition: 'auto_post' }), /server-only AP_ASSESSMENT_SIGNING_KEY/);
+
+  process.env.MASTRA_HOST = '127.0.0.1';
+  process.env.MASTRA_AUTH_TOKEN = 'known-studio-token';
+  process.env.MASTRA_AUTH_USER_ID = 'known-studio-user';
+  assert.throws(() => signAssessment({ disposition: 'auto_post' }), /server-only AP_ASSESSMENT_SIGNING_KEY/);
+
   process.env.AP_ASSESSMENT_SIGNING_KEY = 'replace-with-a-long-random-secret';
   assert.throws(() => signAssessment({ disposition: 'auto_post' }), /server-only AP_ASSESSMENT_SIGNING_KEY/);
   process.env.AP_ASSESSMENT_SIGNING_KEY = 'local-development-assessment-key';
   assert.throws(() => signAssessment({ disposition: 'auto_post' }), /server-only AP_ASSESSMENT_SIGNING_KEY/);
+  process.env.AP_ASSESSMENT_SIGNING_KEY = 'a-real-server-only-signing-key-with-32-characters';
+  assert.doesNotThrow(() => signAssessment({ disposition: 'auto_post' }));
 } finally {
-  if (priorAssessmentKey === undefined) delete process.env.AP_ASSESSMENT_SIGNING_KEY;
-  else process.env.AP_ASSESSMENT_SIGNING_KEY = priorAssessmentKey;
-  if (priorAuthToken === undefined) delete process.env.MASTRA_AUTH_TOKEN;
-  else process.env.MASTRA_AUTH_TOKEN = priorAuthToken;
-  if (priorSigningPosting === undefined) delete process.env.QBO_MCP_ENABLE_POSTING;
-  else process.env.QBO_MCP_ENABLE_POSTING = priorSigningPosting;
+  for (const key of signingEnvironmentKeys) {
+    const value = priorSigningEnvironment[key];
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
 }
 
 const kpiBase: ApKpiEvent = {
