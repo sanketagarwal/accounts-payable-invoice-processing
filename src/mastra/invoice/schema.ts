@@ -172,12 +172,14 @@ export const PolicyConfigSchema = z.object({
 });
 export type PolicyConfig = z.infer<typeof PolicyConfigSchema>;
 
-export const InvoiceWorkflowInputSchema = z
-  .object({
-    rawDocumentRef: DocumentRefSchema,
-    extractedResult: ExtractedInvoiceSchema,
-  })
-  .passthrough();
+export const UnsignedInvoiceWorkflowInputSchema = z.object({
+  rawDocumentRef: DocumentRefSchema,
+  extractedResult: ExtractedInvoiceSchema,
+});
+export type UnsignedInvoiceWorkflowInput = z.infer<typeof UnsignedInvoiceWorkflowInputSchema>;
+export const InvoiceWorkflowInputSchema = UnsignedInvoiceWorkflowInputSchema.extend({
+  submissionSignature: z.string().regex(/^[a-f0-9]{64}$/),
+});
 export type InvoiceWorkflowInput = z.infer<typeof InvoiceWorkflowInputSchema>;
 export const AssessmentStateSchema = z.object({
   invoice: NormalizedInvoiceSchema,

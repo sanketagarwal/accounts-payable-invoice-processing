@@ -4,7 +4,6 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Mastra } from "@mastra/core";
 import { LibSQLStore } from "@mastra/libsql";
-import { MastraStorageExporter, Observability } from "@mastra/observability";
 import { accountsPayableAgent } from "./agents/accounts-payable.ts";
 import {
   apAuth,
@@ -35,15 +34,6 @@ export const mastra = new Mastra({
   agents: { accountsPayableAgent },
   workflows: { invoiceWorkflow },
   storage: applicationStorage,
-  observability: new Observability({
-    configs: {
-      default: {
-        serviceName: "accounts-payable-invoice-processing",
-        exporters: [new MastraStorageExporter()],
-        logging: { enabled: true, level: "info" },
-      },
-    },
-  }),
   server: {
     host: serverHost,
     ...(apAuth ? { auth: apAuth } : {}),

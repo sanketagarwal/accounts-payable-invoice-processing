@@ -3,7 +3,11 @@ import type { RequestContext } from "@mastra/core/request-context";
 import { createTool } from "@mastra/core/tools";
 import { Memory } from "@mastra/memory";
 import { z } from "zod";
-import { ApprovalRequestSchema, invoiceWorkflow } from "../workflows/invoice.ts";
+import {
+  ApprovalRequestSchema,
+  invoiceWorkflow,
+  signInvoiceSubmission,
+} from "../workflows/invoice.ts";
 import {
   InvoiceDraftSchema,
   InvoiceResultSchema,
@@ -139,12 +143,13 @@ const submitInvoice = createTool({
       source,
       sha256: undefined,
     };
-    const workflowInput = {
+    const unsignedWorkflowInput = {
       rawDocumentRef: document,
       extractedResult: checked.extracted,
-      checks: { passed: true, issues: [] },
-      reviewerId: null,
-      snapshot: { rawDocumentRef: document, extractedResult: checked.extracted },
+    };
+    const workflowInput = {
+      ...unsignedWorkflowInput,
+      submissionSignature: signInvoiceSubmission(unsignedWorkflowInput),
     };
     const run = await invoiceWorkflow.createRun();
     const result = await run.start({ inputData: workflowInput, requestContext });

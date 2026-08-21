@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { createStep, createWorkflow } from "@mastra/core/workflows";
 import { z } from "zod";
 import { activeInvoiceRuntime } from "../accounting/providers.ts";
@@ -12,9 +12,11 @@ import {
   NormalizedInvoiceSchema,
   InvoiceResultSchema,
   PostingRequestSchema,
+  UnsignedInvoiceWorkflowInputSchema,
   type ApprovalEvidence,
   type FinalAssessment,
   type InvoiceResult,
+  type UnsignedInvoiceWorkflowInput,
 } from "../invoice/schema.ts";
 import { makeDuplicateDetection } from "../invoice/controls/duplicates.ts";
 import { makeInvoiceMatch } from "../invoice/controls/matching.ts";
@@ -22,12 +24,30 @@ import { makePolicyRouting } from "../invoice/controls/policy.ts";
 import { makeVendorValidation } from "../invoice/controls/vendor.ts";
 
 const runtime = activeInvoiceRuntime;
+const submissionSecret = randomBytes(32);
+
+const submissionPayload = (input: UnsignedInvoiceWorkflowInput) =>
+  JSON.stringify(UnsignedInvoiceWorkflowInputSchema.parse(input));
+
+export const signInvoiceSubmission = (input: UnsignedInvoiceWorkflowInput) =>
+  createHmac("sha256", submissionSecret).update(submissionPayload(input)).digest("hex");
+
+const isTrustedSubmission = (input: z.infer<typeof InvoiceWorkflowInputSchema>) => {
+  const expected = Buffer.from(signInvoiceSubmission(input), "hex");
+  const received = Buffer.from(input.submissionSignature, "hex");
+  return expected.length === received.length && timingSafeEqual(expected, received);
+};
 
 const normalizeStep = createStep({
   id: "normalize-invoice",
   inputSchema: InvoiceWorkflowInputSchema,
   outputSchema: NormalizedInvoiceSchema,
-  execute: async ({ inputData }) => normalizeInvoice(inputData),
+  execute: async ({ inputData }) => {
+    if (!isTrustedSubmission(inputData)) {
+      throw new Error("Invoice processing requires a server-validated document submission");
+    }
+    return normalizeInvoice(inputData);
+  },
 });
 
 const validateVendor = makeVendorValidation(runtime);

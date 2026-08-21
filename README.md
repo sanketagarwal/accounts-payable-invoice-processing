@@ -36,7 +36,7 @@ Approve invoice run <RUN_ID>. Comment: Reviewed in Studio.
 
 ## Connect your accounting data
 
-QuickBooks support is included but optional. Set `ACCOUNTING_PROVIDER=quickbooks-mcp` and the `QBO_MCP_*` variables in `.env`, or implement `AccountingProvider` for another system.
+QuickBooks support is included but optional. For a sandbox, set `ACCOUNTING_PROVIDER=quickbooks-mcp`, `SANCTIONS_SCREENING=fixture`, and the `QBO_MCP_*` variables in `.env`. In production, replace the fixture sanctions check with your own screener. You can also implement `AccountingProvider` for another system.
 
 For a QuickBooks sandbox demo, authenticate Intuit's [QuickBooks Online MCP server](https://github.com/intuit/quickbooks-online-mcp-server), then provide its built entry point, token store, and QuickBooks account IDs. Use a unique invoice number that matches an active sandbox vendor and PO. Posted bills appear under **Expenses & bills → Bills**.
 
