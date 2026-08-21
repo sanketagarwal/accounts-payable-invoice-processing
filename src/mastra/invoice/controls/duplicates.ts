@@ -1,22 +1,24 @@
 import type { InvoiceRuntime } from "../../accounting/providers.ts";
-import { runtimeSources } from "../../accounting/providers.ts";
 import { ProviderUnavailableError } from "../../accounting/types.ts";
-import { AssessmentStateSchema, type AssessmentState, type StepDecision } from "../schema.ts";
+import type { AssessmentState, StepDecision } from "../schema.ts";
+import { decide } from "./decision.ts";
 
-const withinDuplicateWindow = (left: string, right: string) => {
-  const elapsed = Math.abs(Date.parse(left) - Date.parse(right));
-  return !Number.isFinite(elapsed) || elapsed / 86_400_000 <= 7;
+const withinSevenDays = (left: string, right: string) => {
+  const days = Math.abs(Date.parse(left) - Date.parse(right)) / 86_400_000;
+  return !Number.isFinite(days) || days <= 7;
 };
+
 export function makeDuplicateDetection(runtime: InvoiceRuntime) {
-  const sources = runtimeSources(runtime);
+  const provider = runtime.provider;
   return async (state: AssessmentState) => {
-    if (!state.vendor || state.decisions.some((decision) => decision.outcome !== "pass"))
-      return state;
+    if (!state.vendor || state.decisions.some(({ outcome }) => outcome !== "pass")) return state;
+
     const adaptations: StepDecision["adaptations"] = [];
-    if (!runtime.provider.billHistorySeed)
-      adaptations.push({ code: "BILL_HISTORY_SEED_UNAVAILABLE", providerId: runtime.provider.id });
-    if (!runtime.provider.capabilities.invoiceChannel)
-      adaptations.push({ code: "INVOICE_CHANNEL_UNAVAILABLE", providerId: runtime.provider.id });
+    if (!provider.listBills)
+      adaptations.push({ code: "BILL_HISTORY_SEED_UNAVAILABLE", providerId: provider.id });
+    if (!provider.invoiceChannelAvailable)
+      adaptations.push({ code: "INVOICE_CHANNEL_UNAVAILABLE", providerId: provider.id });
+
     try {
       await runtime.seedHistory();
       const candidates = await runtime.history.findPotentialDuplicates({
@@ -25,45 +27,42 @@ export function makeDuplicateDetection(runtime: InvoiceRuntime) {
         currency: state.invoice.currency,
         totalMinor: state.invoice.totalMinor,
       });
-      const duplicates = candidates.filter(
-        (candidate) =>
-          candidate.invoiceNumber?.trim().toLowerCase() ===
-            state.invoice.invoiceNumber.trim().toLowerCase() ||
-          (candidate.currency === state.invoice.currency &&
-            candidate.totalMinor === state.invoice.totalMinor &&
-            withinDuplicateWindow(candidate.invoiceDate, state.invoice.invoiceDate)),
-      );
-      state.duplicateIds = duplicates.map((invoice) => invoice.id);
-      state.decisions.push({
+      state.duplicateIds = candidates
+        .filter(
+          (invoice) =>
+            invoice.invoiceNumber?.trim().toLowerCase() ===
+              state.invoice.invoiceNumber.trim().toLowerCase() ||
+            (invoice.currency === state.invoice.currency &&
+              invoice.totalMinor === state.invoice.totalMinor &&
+              withinSevenDays(invoice.invoiceDate, state.invoice.invoiceDate)),
+        )
+        .map(({ id }) => id);
+
+      const duplicate = state.duplicateIds.length > 0;
+      return decide(state, {
         step: "dedup",
-        outcome: duplicates.length ? "review" : "pass",
-        reviewType: duplicates.length ? "possible_duplicate" : null,
+        outcome: duplicate ? "review" : "pass",
+        reviewType: duplicate ? "possible_duplicate" : null,
         reasons: [
           {
-            code: duplicates.length ? "POSSIBLE_DUPLICATE" : "NO_DUPLICATE",
-            message: duplicates.length
-              ? "Potential prior invoice found"
-              : "No duplicate invoice found",
+            code: duplicate ? "POSSIBLE_DUPLICATE" : "NO_DUPLICATE",
+            message: duplicate ? "Potential prior invoice found" : "No duplicate invoice found",
             evidence: { invoiceIds: state.duplicateIds },
           },
         ],
-        signals: duplicates.length ? ["possible_duplicate"] : [],
+        signals: duplicate ? ["possible_duplicate"] : [],
         adaptations,
-        sources: { billHistory: sources.billHistory },
+        sources: { billHistory: provider.listBills ? provider.id : "workflow-history" },
       });
-      return AssessmentStateSchema.parse(state);
     } catch (error) {
       if (!(error instanceof ProviderUnavailableError)) throw error;
-      state.decisions.push({
+      return decide(state, {
         step: "dedup",
         outcome: "unknown_retry",
-        reviewType: null,
         reasons: [{ code: "HISTORY_UNAVAILABLE", message: error.message }],
-        signals: [],
         adaptations,
-        sources: { billHistory: sources.billHistory },
+        sources: { billHistory: provider.id },
       });
-      return AssessmentStateSchema.parse(state);
     }
   };
 }

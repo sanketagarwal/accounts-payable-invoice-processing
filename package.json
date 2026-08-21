@@ -3,11 +3,8 @@
   "version": "1.0.0",
   "private": true,
   "description": "An accounts payable agent that extracts invoices, matches POs and receipts, routes approvals, and optionally posts bills to QuickBooks.",
-  "keywords": [],
   "license": "Apache-2.0",
-  "author": "",
   "type": "module",
-  "main": "index.js",
   "scripts": {
     "dev": "mastra dev",
     "build": "mastra build",

@@ -1,15 +1,10 @@
 import type { InvoiceRuntime } from "../../accounting/providers.ts";
-import { runtimeSources } from "../../accounting/providers.ts";
 import { ProviderUnavailableError } from "../../accounting/types.ts";
-import {
-  AssessmentStateSchema,
-  type AssessmentState,
-  type NormalizedInvoice,
-  type StepDecision,
-} from "../schema.ts";
+import type { AssessmentState, NormalizedInvoice, StepDecision } from "../schema.ts";
 import { confidenceProblems } from "../validation.ts";
+import { decide } from "./decision.ts";
 
-const initial = (invoice: NormalizedInvoice): AssessmentState => ({
+const emptyAssessment = (invoice: NormalizedInvoice): AssessmentState => ({
   invoice,
   vendor: null,
   purchaseOrder: null,
@@ -18,45 +13,31 @@ const initial = (invoice: NormalizedInvoice): AssessmentState => ({
   matchMode: null,
   duplicateIds: [],
 });
-const unavailable = (
-  error: ProviderUnavailableError,
-  sources: Record<string, string>,
-): StepDecision => ({
-  step: "vendor",
-  outcome: "unknown_retry",
-  reviewType: null,
-  reasons: [{ code: "VENDOR_LOOKUP_UNAVAILABLE", message: error.message }],
-  signals: [],
-  adaptations: [],
-  sources,
-});
-const identity = (value: string) => value.replace(/[^a-z0-9]/gi, "").toLowerCase();
+
+const canonicalId = (value: string) => value.replace(/[^a-z0-9]/gi, "").toLowerCase();
+
 export function makeVendorValidation(runtime: InvoiceRuntime) {
-  const provider = runtime.provider,
-    sources = runtimeSources(runtime);
+  const provider = runtime.provider;
+
   return async (invoice: NormalizedInvoice) => {
-    const state = initial(invoice),
-      adaptations: StepDecision["adaptations"] = [],
-      signals: string[] = [];
-    const policy = await runtime.policy.getPolicy();
+    const state = emptyAssessment(invoice);
     const { uncertainFields, missingConfidence } = confidenceProblems(
       invoice,
-      policy.lowConfidenceThreshold,
+      runtime.policy.lowConfidenceThreshold,
     );
     if (
-      invoice.overallConfidence < policy.lowConfidenceThreshold ||
+      invoice.overallConfidence < runtime.policy.lowConfidenceThreshold ||
       uncertainFields.length ||
       missingConfidence.length
     ) {
-      state.decisions.push({
+      return decide(state, {
         step: "extraction",
         outcome: "verify_extraction",
         reviewType: "verify_extraction",
         reasons: [
           {
             code: "LOW_EXTRACTION_CONFIDENCE",
-            message:
-              "Document extraction requires human verification before financial controls run",
+            message: "Verify the extracted fields before financial controls run",
             evidence: {
               overallConfidence: invoice.overallConfidence,
               uncertainFields,
@@ -65,57 +46,58 @@ export function makeVendorValidation(runtime: InvoiceRuntime) {
           },
         ],
         signals: ["low_extraction_confidence"],
-        adaptations,
-        sources: {},
       });
-      return AssessmentStateSchema.parse(state);
     }
-    if (!provider.capabilities.vendorBankDetails) {
-      adaptations.push({ code: "VENDOR_BANK_DETAILS_UNAVAILABLE", providerId: sources.vendors });
+
+    const adaptations: StepDecision["adaptations"] = [];
+    const signals: string[] = [];
+    if (provider.vendorData === "basic") {
+      adaptations.push(
+        { code: "VENDOR_BANK_DETAILS_UNAVAILABLE", providerId: provider.id },
+        { code: "VENDOR_STATUS_BINARY", providerId: provider.id },
+      );
       signals.push("payment_details_unverifiable");
     }
-    if (provider.capabilities.vendorStatusRichness === "binary")
-      adaptations.push({ code: "VENDOR_STATUS_BINARY", providerId: sources.vendors });
-    if (runtime.sanctionsIsFallback)
-      adaptations.push({ code: "SANCTIONS_SOURCE_FALLBACK", providerId: sources.sanctions });
+    if (runtime.sanctionsSource !== provider.id)
+      adaptations.push({
+        code: "SANCTIONS_SOURCE_FALLBACK",
+        providerId: runtime.sanctionsSource,
+      });
+
+    const sources = { vendors: provider.id, sanctions: runtime.sanctionsSource };
     try {
-      const vendors = await provider.vendors!.find({
+      const vendors = await provider.findVendors({
         name: invoice.vendorName,
         taxId: invoice.vendorTaxId,
       });
       if (vendors.length !== 1) {
-        state.decisions.push({
+        const ambiguous = vendors.length > 1;
+        return decide(state, {
           step: "vendor",
           outcome: "review",
-          reviewType: vendors.length ? "ambiguous_vendor" : "unknown_vendor",
+          reviewType: ambiguous ? "ambiguous_vendor" : "unknown_vendor",
           reasons: [
             {
-              code: vendors.length ? "VENDOR_AMBIGUOUS" : "VENDOR_NOT_FOUND",
-              message: vendors.length
+              code: ambiguous ? "VENDOR_AMBIGUOUS" : "VENDOR_NOT_FOUND",
+              message: ambiguous
                 ? "Multiple vendors match the printed identity"
                 : "No vendor matches the printed identity",
             },
           ],
           signals,
           adaptations,
-          sources: { vendors: sources.vendors },
+          sources: { vendors: provider.id },
         });
-        return AssessmentStateSchema.parse(state);
       }
-      const vendor = vendors[0]!,
-        restriction =
-          provider.capabilities.vendorStatusRichness === "binary"
-            ? await runtime.statusRestrictions?.getRestriction({
-                providerId: sources.vendors,
-                vendorId: vendor.id,
-              })
-            : null;
-      state.vendor = restriction ? { ...vendor, status: restriction } : vendor;
-      const taxIdMismatch =
+
+      const vendor = vendors[0]!;
+      state.vendor = vendor;
+      const taxIdMismatch = Boolean(
         invoice.vendorTaxId &&
         vendor.taxId &&
-        identity(invoice.vendorTaxId) !== identity(vendor.taxId);
-      const mismatchReason = taxIdMismatch
+        canonicalId(invoice.vendorTaxId) !== canonicalId(vendor.taxId),
+      );
+      const mismatchReason: StepDecision["reasons"][number] | null = taxIdMismatch
         ? {
             code: "VENDOR_TAX_ID_MISMATCH",
             message: "Printed and canonical vendor tax IDs conflict",
@@ -123,31 +105,29 @@ export function makeVendorValidation(runtime: InvoiceRuntime) {
           }
         : null;
       if (invoice.vendorTaxId && !vendor.taxId) signals.push("vendor_tax_id_unverifiable");
-      if (state.vendor.status !== "approved") {
-        state.decisions.push({
+
+      if (vendor.status !== "approved")
+        return decide(state, {
           step: "vendor",
           outcome: "blocked",
-          reviewType: null,
           reasons: [
             {
               code: "VENDOR_NOT_APPROVED",
-              message: `Vendor status is ${state.vendor.status}`,
-              evidence: { status: state.vendor.status },
+              message: `Vendor status is ${vendor.status}`,
+              evidence: { status: vendor.status },
             },
             ...(mismatchReason ? [mismatchReason] : []),
           ],
           signals,
           adaptations,
-          sources: { vendors: sources.vendors },
+          sources: { vendors: provider.id },
         });
-        return AssessmentStateSchema.parse(state);
-      }
-      const sanctions = await runtime.sanctions.screen(state.vendor);
-      if (sanctions.matched) {
-        state.decisions.push({
+
+      const sanctions = await runtime.screenVendor(vendor);
+      if (sanctions.matched)
+        return decide(state, {
           step: "vendor",
           outcome: "blocked",
-          reviewType: null,
           reasons: [
             {
               code: "SANCTIONS_MATCH",
@@ -158,45 +138,47 @@ export function makeVendorValidation(runtime: InvoiceRuntime) {
           ],
           signals,
           adaptations,
-          sources: { vendors: sources.vendors, sanctions: sources.sanctions },
+          sources,
         });
-        return AssessmentStateSchema.parse(state);
-      }
+
       if (mismatchReason) {
         const uncertain = invoice.confidence.some(
-          (item) => item.field === "vendorTaxId" && item.confidence < policy.lowConfidenceThreshold,
+          ({ field, confidence }) =>
+            field === "vendorTaxId" && confidence < runtime.policy.lowConfidenceThreshold,
         );
-        state.decisions.push({
+        return decide(state, {
           step: "vendor",
           outcome: uncertain ? "verify_extraction" : "review",
           reviewType: uncertain ? "verify_extraction" : "vendor_identity_mismatch",
           reasons: [mismatchReason],
           signals,
           adaptations,
-          sources: { vendors: sources.vendors, sanctions: sources.sanctions },
+          sources,
         });
-        return AssessmentStateSchema.parse(state);
       }
-      state.decisions.push({
+
+      return decide(state, {
         step: "vendor",
         outcome: "pass",
-        reviewType: null,
         reasons: [
           {
             code: "VENDOR_VALID",
             message: "Vendor identity and status are valid",
-            evidence: { vendorId: state.vendor.id },
+            evidence: { vendorId: vendor.id },
           },
         ],
         signals,
         adaptations,
-        sources: { vendors: sources.vendors, sanctions: sources.sanctions },
+        sources,
       });
-      return AssessmentStateSchema.parse(state);
     } catch (error) {
       if (!(error instanceof ProviderUnavailableError)) throw error;
-      state.decisions.push(unavailable(error, { vendors: sources.vendors }));
-      return AssessmentStateSchema.parse(state);
+      return decide(state, {
+        step: "vendor",
+        outcome: "unknown_retry",
+        reasons: [{ code: "VENDOR_LOOKUP_UNAVAILABLE", message: error.message }],
+        sources: { vendors: provider.id },
+      });
     }
   };
 }

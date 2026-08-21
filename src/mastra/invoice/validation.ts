@@ -12,26 +12,19 @@ const isDate = (value: string) =>
   !Number.isNaN(Date.parse(`${value}T00:00:00Z`)) &&
   new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value;
 const blank = (value: string) => value.trim().length === 0;
-const noMinorUnit = new Set([
-  "XAG",
-  "XAU",
-  "XBA",
-  "XBB",
-  "XBC",
-  "XBD",
-  "XDR",
-  "XPD",
-  "XPT",
-  "XSU",
-  "XTS",
-  "XUA",
-  "XXX",
-]);
-// ISO 4217 amendments 176 and 179 postdate currency-codes@2.2.0's bundled table.
-const currentCurrencyOverrides = new Map([
-  ["XAD", 2],
-  ["XCG", 2],
-]);
+// These ISO 4217 additions postdate currency-codes' bundled table.
+const recentCurrencies = new Set(["XAD", "XCG"]);
+const currencyDigits = (currency: string) => {
+  if (currencyCode(currency)?.code !== currency && !recentCurrencies.has(currency)) return null;
+  try {
+    return (
+      new Intl.NumberFormat("en", { style: "currency", currency }).resolvedOptions()
+        .maximumFractionDigits ?? 2
+    );
+  } catch {
+    return null;
+  }
+};
 const hasMinorUnitPrecision = (value: number, digits: number) =>
   new Decimal(value).decimalPlaces() <= digits;
 // Unit prices may be sub-minor-unit rates; posted extended amounts must obey the currency scale.
@@ -63,13 +56,9 @@ export function validateExtraction(draft: InvoiceDraft): {
         (issue) => `${issue.path.join(".") || "invoice"}: ${issue.message}`,
       ),
     };
-  const invoice = parsed.data,
-    currency = currencyCode(invoice.currency),
-    overrideDigits = currentCurrencyOverrides.get(invoice.currency);
-  const validCurrency = overrideDigits !== undefined || currency?.code === invoice.currency;
-  const currencyDigits =
-    overrideDigits ??
-    (validCurrency && !noMinorUnit.has(invoice.currency) ? currency!.digits : null);
+  const invoice = parsed.data;
+  const digits = currencyDigits(invoice.currency);
+  const validCurrency = digits !== null;
   const lineAmounts: Array<number | Decimal> = invoice.lines.map(
     (line) => line.lineTotal ?? new Decimal(line.qty).mul(line.unitPrice),
   );
@@ -84,7 +73,7 @@ export function validateExtraction(draft: InvoiceDraft): {
       .map((field) => `${field} is required`),
     ...(isDate(invoice.invoiceDate) ? [] : ["invoiceDate must be yyyy-mm-dd"]),
     ...(validCurrency ? [] : ["currency must be a canonical uppercase ISO 4217 code"]),
-    ...(currencyDigits !== null
+    ...(digits !== null
       ? (
           [
             ["subtotal", invoice.subtotal],
@@ -92,7 +81,7 @@ export function validateExtraction(draft: InvoiceDraft): {
             ["total", invoice.total],
           ] as const
         ).flatMap(([field, value]) =>
-          value !== null && !hasMinorUnitPrecision(value, currencyDigits)
+          value !== null && !hasMinorUnitPrecision(value, digits)
             ? [`${field} exceeds ${invoice.currency} minor-unit precision`]
             : [],
         )
@@ -102,26 +91,26 @@ export function validateExtraction(draft: InvoiceDraft): {
       : []),
     ...(validCurrency &&
     subtotalBasis !== null &&
-    !reconciles([subtotalBasis, invoice.tax ?? 0], invoice.total, currencyDigits)
+    !reconciles([subtotalBasis, invoice.tax ?? 0], invoice.total, digits)
       ? ["subtotal + tax does not equal total"]
       : []),
     ...invoice.lines.flatMap((line, index) => [
       ...(blank(line.description) ? [`lines.${index}.description is required`] : []),
-      ...(currencyDigits !== null &&
+      ...(digits !== null &&
       line.lineTotal !== null &&
-      !hasMinorUnitPrecision(line.lineTotal, currencyDigits)
+      !hasMinorUnitPrecision(line.lineTotal, digits)
         ? [`lines.${index}.lineTotal exceeds ${invoice.currency} minor-unit precision`]
         : []),
       ...(validCurrency &&
       line.lineTotal !== null &&
-      !reconciles([new Decimal(line.qty).mul(line.unitPrice)], line.lineTotal, currencyDigits)
+      !reconciles([new Decimal(line.qty).mul(line.unitPrice)], line.lineTotal, digits)
         ? [`lines.${index} does not reconcile`]
         : []),
     ]),
     ...(validCurrency &&
     invoice.subtotal !== null &&
     lineAmounts.length &&
-    !reconciles(lineAmounts, invoice.subtotal, currencyDigits)
+    !reconciles(lineAmounts, invoice.subtotal, digits)
       ? ["line totals do not equal subtotal"]
       : []),
   ];
@@ -130,7 +119,7 @@ export function validateExtraction(draft: InvoiceDraft): {
 
 const lineLeaf = /^(sku|description|qty|unitPrice|lineTotal)$/;
 
-export const canonicalConfidenceField = (field: string) => {
+const canonicalConfidenceField = (field: string) => {
   const normalized = field.replace(/\[(\d+)\]/g, ".$1");
   return lineLeaf.test(normalized) ? `lines.0.${normalized}` : normalized;
 };
@@ -138,7 +127,7 @@ export const canonicalConfidenceField = (field: string) => {
 const entries = (invoice: NormalizedInvoice) =>
   invoice.confidence.map((item) => ({ ...item, field: canonicalConfidenceField(item.field) }));
 
-export const confidenceFor = (invoice: NormalizedInvoice, field: string) => {
+const confidenceFor = (invoice: NormalizedInvoice, field: string) => {
   const canonical = canonicalConfidenceField(field);
   const values = entries(invoice);
   const candidates = values.filter(
@@ -148,7 +137,7 @@ export const confidenceFor = (invoice: NormalizedInvoice, field: string) => {
   return candidates.length ? Math.min(...candidates.map((item) => item.confidence)) : undefined;
 };
 
-export const requiredConfidenceFields = (invoice: NormalizedInvoice) => [
+const requiredConfidenceFields = (invoice: NormalizedInvoice) => [
   "invoiceNumber",
   "vendorName",
   "poNumber",

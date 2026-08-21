@@ -9,7 +9,7 @@ const configuredToken = process.env.MASTRA_AUTH_TOKEN?.trim(),
 
 export const serverHost = process.env.MASTRA_HOST?.trim() || "127.0.0.1";
 
-export function isLoopbackHost(host: string) {
+function isLoopbackHost(host: string) {
   const normalized = host.trim().toLowerCase();
   return (
     normalized === "localhost" ||

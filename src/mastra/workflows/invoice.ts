@@ -5,7 +5,6 @@ import { activeInvoiceRuntime } from "../accounting/providers.ts";
 import { ReviewerContextSchema } from "../invoice/schema.ts";
 import { normalizeInvoice } from "../invoice/money.ts";
 import {
-  AssessmentStateSchema,
   DecisionReasonSchema,
   FinalAssessmentSchema,
   InvoiceWorkflowInputSchema,
@@ -55,32 +54,16 @@ const matchPurchaseOrder = makeInvoiceMatch(runtime);
 const detectDuplicates = makeDuplicateDetection(runtime);
 const applyPolicy = makePolicyRouting(runtime);
 
-const vendorStep = createStep({
-  id: "validate-vendor",
+const assessmentStep = createStep({
+  id: "assess-invoice",
   inputSchema: NormalizedInvoiceSchema,
-  outputSchema: AssessmentStateSchema,
-  execute: async ({ inputData }) => validateVendor(inputData),
-});
-
-const matchingStep = createStep({
-  id: "match-purchase-order",
-  inputSchema: AssessmentStateSchema,
-  outputSchema: AssessmentStateSchema,
-  execute: async ({ inputData }) => matchPurchaseOrder(inputData),
-});
-
-const duplicateStep = createStep({
-  id: "detect-duplicates",
-  inputSchema: AssessmentStateSchema,
-  outputSchema: AssessmentStateSchema,
-  execute: async ({ inputData }) => detectDuplicates(inputData),
-});
-
-const policyStep = createStep({
-  id: "apply-policy",
-  inputSchema: AssessmentStateSchema,
   outputSchema: FinalAssessmentSchema,
-  execute: async ({ inputData }) => applyPolicy(inputData),
+  execute: async ({ inputData }) => {
+    const vendorAssessment = await validateVendor(inputData);
+    const matchedAssessment = await matchPurchaseOrder(vendorAssessment);
+    const duplicateAssessment = await detectDuplicates(matchedAssessment);
+    return applyPolicy(duplicateAssessment);
+  },
 });
 
 const approvalDecisionSchema = z.object({
@@ -101,6 +84,19 @@ export const ApprovalRequestSchema = z.object({
   adaptations: z.array(z.string()),
   invoiceDigest: z.string().regex(/^[a-f0-9]{64}$/),
 });
+
+export const summarizeDecisions = (assessment: FinalAssessment) => {
+  const reasonDetails = assessment.decisions.flatMap(({ reasons }) => reasons);
+  return {
+    reasons: reasonDetails.map(({ code }) => code),
+    reasonDetails,
+    reviewTypes: assessment.decisions.flatMap(({ reviewType }) => (reviewType ? [reviewType] : [])),
+    signals: assessment.decisions.flatMap(({ signals }) => signals),
+    adaptations: assessment.decisions.flatMap(({ adaptations }) =>
+      adaptations.map(({ code }) => code),
+    ),
+  };
+};
 
 const invoiceDigest = (assessment: FinalAssessment) =>
   createHash("sha256")
@@ -168,17 +164,7 @@ const approvalStep = createStep({
         currency: inputData.invoice.currency,
         totalMinor: inputData.invoice.totalMinor,
         disposition: "approval_required",
-        reasons: inputData.decisions.flatMap((decision) =>
-          decision.reasons.map((reason) => reason.code),
-        ),
-        reasonDetails: inputData.decisions.flatMap((decision) => decision.reasons),
-        reviewTypes: inputData.decisions.flatMap((decision) =>
-          decision.reviewType ? [decision.reviewType] : [],
-        ),
-        signals: inputData.decisions.flatMap((decision) => decision.signals),
-        adaptations: inputData.decisions.flatMap((decision) =>
-          decision.adaptations.map((adaptation) => adaptation.code),
-        ),
+        ...summarizeDecisions(inputData),
         invoiceDigest: invoiceDigest(inputData),
       });
     }
@@ -204,7 +190,7 @@ const postingStep = createStep({
   execute: async ({ inputData }) => {
     if (inputData.executionStatus !== "ready_to_post") return inputData;
 
-    const posting = runtime.provider.posting;
+    const posting = runtime.provider.postBill;
     if (!posting) {
       return {
         ...inputData,
@@ -229,7 +215,7 @@ const postingStep = createStep({
         purchaseOrder: inputData.purchaseOrder,
         approval: inputData.approval,
       });
-      const receipt = await posting.postBill(request);
+      const receipt = await posting(request);
 
       await runtime.history.save({
         id: receipt.externalBillId,
@@ -265,10 +251,7 @@ export const invoiceWorkflow = createWorkflow({
   options: { shouldPersistSnapshot: () => true },
 })
   .then(normalizeStep)
-  .then(vendorStep)
-  .then(matchingStep)
-  .then(duplicateStep)
-  .then(policyStep)
+  .then(assessmentStep)
   .then(approvalStep)
   .then(postingStep)
   .commit();

@@ -24,27 +24,28 @@ export function toMajorUnits(value: number, currency: string): number {
   return new Decimal(value).div(new Decimal(10).pow(exponent(currency))).toNumber();
 }
 export function normalizeInvoice(output: InvoiceWorkflowInput): NormalizedInvoice {
-  const x: ExtractedInvoice = output.extractedResult,
-    money = (value: number | null) => (value === null ? null : toMinorUnits(value, x.currency));
+  const invoice: ExtractedInvoice = output.extractedResult;
+  const money = (value: number | null) =>
+    value === null ? null : toMinorUnits(value, invoice.currency);
   return NormalizedInvoiceSchema.parse({
     document: output.rawDocumentRef,
-    invoiceNumber: x.invoiceNumber,
-    vendorName: x.vendorName,
-    vendorTaxId: x.vendorTaxId,
-    poNumber: x.poNumber,
-    invoiceDate: x.invoiceDate,
-    currency: x.currency,
-    subtotalMinor: money(x.subtotal),
-    taxMinor: money(x.tax),
-    totalMinor: toMinorUnits(x.total, x.currency),
-    lines: x.lines.map((line) => ({
+    invoiceNumber: invoice.invoiceNumber,
+    vendorName: invoice.vendorName,
+    vendorTaxId: invoice.vendorTaxId,
+    poNumber: invoice.poNumber,
+    invoiceDate: invoice.invoiceDate,
+    currency: invoice.currency,
+    subtotalMinor: money(invoice.subtotal),
+    taxMinor: money(invoice.tax),
+    totalMinor: toMinorUnits(invoice.total, invoice.currency),
+    lines: invoice.lines.map((line) => ({
       sku: line.sku,
       description: line.description,
       qty: line.qty,
-      unitPriceMinor: toMinorUnits(line.unitPrice, x.currency),
+      unitPriceMinor: toMinorUnits(line.unitPrice, invoice.currency),
       lineTotalMinor: money(line.lineTotal),
     })),
-    confidence: x.confidence,
-    overallConfidence: x.overallConfidence,
+    confidence: invoice.confidence,
+    overallConfidence: invoice.overallConfidence,
   });
 }

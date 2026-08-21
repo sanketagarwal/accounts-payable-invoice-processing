@@ -1,128 +1,77 @@
-import type { SanctionsScreener } from "./types.ts";
-import {
-  FixturePolicyProvider,
-  FixtureSanctionsScreener,
-  InMemoryInvoiceHistoryRepository,
-  fixtureProvider,
-} from "./fixture.ts";
-import { makeQuickBooksMcpProvider } from "./quickbooks.ts";
-import {
-  assertCapabilityPolicy,
-  assertProvider,
-  defaultCapabilityPolicy,
-  sourceId,
-  type AccountingProvider,
-  type BooleanCapability,
-  type CapabilityPolicy,
-  type InvoiceHistoryRepository,
-  type PolicyProvider,
-  type VendorStatusRestrictionSource,
-} from "./types.ts";
+import { fixtureDb, fixtureProvider, screenFixtureVendor } from "./fixture.ts";
+import { makeQuickBooksProvider } from "./quickbooks.ts";
+import type { AccountingProvider, InvoiceHistory, SanctionsScreener } from "./types.ts";
+import type { PolicyConfig, PriorInvoice } from "../invoice/schema.ts";
 
-const factories: Record<string, () => AccountingProvider> = {
-  fixture: () => fixtureProvider,
-  "quickbooks-mcp": () => makeQuickBooksMcpProvider(),
-};
-const instances = new Map<string, AccountingProvider>();
+class InMemoryInvoiceHistory implements InvoiceHistory {
+  private readonly invoices = new Map<string, PriorInvoice>();
 
-export const providerRegistry = {
-  create(id: string) {
-    const instance = instances.get(id);
-    if (instance) return instance;
-
-    const factory = factories[id];
-    if (!factory) throw new Error(`Unknown accounting provider: ${id}`);
-
-    const created = assertProvider(factory());
-    instances.set(id, created);
-    return created;
-  },
-};
-
-export function validateProviderSelection(
-  provider: AccountingProvider,
-  options: { policy?: CapabilityPolicy; sanctionsFallback?: SanctionsScreener } = {},
-) {
-  const policy = options.policy ?? defaultCapabilityPolicy;
-  assertCapabilityPolicy(policy);
-  const missing = policy.required.filter(
-    (capability) =>
-      !provider.capabilities[capability] &&
-      !(capability === "sanctions" && options.sanctionsFallback),
-  );
-  if (missing.length)
-    throw new Error(
-      `Accounting provider ${provider.id} is missing required capabilities: ${missing.join(", ")}`,
+  async findPotentialDuplicates(input: {
+    vendorId: string;
+    invoiceNumber: string;
+    currency: string;
+    totalMinor: number;
+  }) {
+    const invoiceNumber = input.invoiceNumber.trim().toLowerCase();
+    return [...this.invoices.values()].filter(
+      (invoice) =>
+        invoice.vendorId === input.vendorId &&
+        (invoice.invoiceNumber?.trim().toLowerCase() === invoiceNumber ||
+          (invoice.currency === input.currency && invoice.totalMinor === input.totalMinor)),
     );
-  return provider;
+  }
+
+  async seed(invoices: PriorInvoice[]) {
+    for (const invoice of invoices) this.invoices.set(invoice.id, invoice);
+  }
+
+  async save(invoice: PriorInvoice) {
+    this.invoices.set(invoice.id, invoice);
+  }
 }
-export const missingCapabilities = (
-  provider: AccountingProvider,
-  capabilities: BooleanCapability[],
-) => capabilities.filter((capability) => !provider.capabilities[capability]);
+
+const loadProvider = () => {
+  const id = process.env.ACCOUNTING_PROVIDER?.trim() || "fixture";
+  if (id === "fixture") return fixtureProvider;
+  if (id === "quickbooks-mcp") return makeQuickBooksProvider();
+  throw new Error(`Unknown accounting provider: ${id}`);
+};
 
 export interface InvoiceRuntime {
   provider: AccountingProvider;
-  history: InvoiceHistoryRepository;
-  policy: PolicyProvider;
-  sanctions: SanctionsScreener;
-  sanctionsIsFallback: boolean;
-  statusRestrictions?: VendorStatusRestrictionSource;
+  history: InvoiceHistory;
+  policy: PolicyConfig;
+  screenVendor: SanctionsScreener;
+  sanctionsSource: string;
   seedHistory(): Promise<void>;
 }
-export function createInvoiceRuntime(
-  options: {
-    provider?: AccountingProvider;
-    providerId?: string;
-    history?: InvoiceHistoryRepository;
-    policy?: PolicyProvider;
-    sanctionsFallback?: SanctionsScreener;
-    statusRestrictions?: VendorStatusRestrictionSource;
-  } = {},
-): InvoiceRuntime {
-  const provider =
-    options.provider ??
-    providerRegistry.create(options.providerId ?? process.env.ACCOUNTING_PROVIDER ?? "fixture");
-  const fallback =
-    options.sanctionsFallback ??
-    (process.env.SANCTIONS_SCREENING === "fixture" ? new FixtureSanctionsScreener() : undefined);
-  validateProviderSelection(provider, { sanctionsFallback: fallback });
-  const sanctions = provider.sanctions ?? fallback;
-  if (!sanctions)
-    throw new Error(`Accounting provider ${provider.id} requires a sanctions screener`);
-  const history = options.history ?? new InMemoryInvoiceHistoryRepository(),
-    policy = options.policy ?? new FixturePolicyProvider();
-  let syncing: Promise<void> | undefined;
+
+function createInvoiceRuntime(provider = loadProvider()): InvoiceRuntime {
+  const fixtureSanctions = process.env.SANCTIONS_SCREENING === "fixture";
+  const screenVendor = provider.screenVendor ?? (fixtureSanctions ? screenFixtureVendor : null);
+  if (!screenVendor) throw new Error(`${provider.displayName} requires a sanctions screener`);
+
+  const history = new InMemoryInvoiceHistory();
+  let historySeed: Promise<void> | undefined;
+
   return {
     provider,
     history,
-    policy,
-    sanctions,
-    sanctionsIsFallback: !provider.sanctions,
-    statusRestrictions: options.statusRestrictions,
-    seedHistory: () => {
-      if (!provider.billHistorySeed) return Promise.resolve();
-      if (!syncing)
-        syncing = provider
-          .billHistorySeed()
-          .then((invoices) => history.seed(invoices))
-          .catch((error) => {
-            syncing = undefined;
-            throw error;
-          });
-      return syncing;
+    policy: fixtureDb.policy,
+    screenVendor,
+    sanctionsSource: provider.screenVendor ? provider.id : "fixture-sanctions",
+    async seedHistory() {
+      if (!provider.listBills) return Promise.resolve();
+      try {
+        return await (historySeed ??= provider
+          .listBills()
+          .then((invoices) => history.seed(invoices)));
+      } catch (error) {
+        historySeed = undefined;
+        throw error;
+      }
     },
   };
 }
+
 export const activeInvoiceRuntime = createInvoiceRuntime();
-export const runtimeSources = (runtime: InvoiceRuntime) => ({
-  vendors: sourceId(runtime.provider, "vendors"),
-  purchaseOrders: sourceId(runtime.provider, "purchaseOrders"),
-  goodsReceipts: sourceId(runtime.provider, "goodsReceipts"),
-  sanctions: runtime.sanctionsIsFallback
-    ? "standalone-sanctions"
-    : sourceId(runtime.provider, "sanctions"),
-  billHistory: runtime.provider.billHistorySeed
-    ? sourceId(runtime.provider, "billHistory")
-    : "pipeline-history",
-});

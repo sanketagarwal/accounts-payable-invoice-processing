@@ -9,14 +9,10 @@ import { RequestContext } from "@mastra/core/request-context";
 import { noopObserve } from "@mastra/core/tools";
 import { MCPClient } from "@mastra/mcp";
 import {
-  assertProvider,
   PostingConflictError,
   ProviderUnavailableError,
   type AccountingProvider,
-  type PostingAdapter,
-  type PurchaseOrderRepository,
   type VendorLookup,
-  type VendorRepository,
 } from "./types.ts";
 import {
   PostingReceiptSchema,
@@ -30,39 +26,6 @@ import { toMajorUnits, toMinorUnits } from "../invoice/money.ts";
 export interface McpToolClient {
   listToolNames(): Promise<Set<string>>;
   call(toolName: string, input: unknown): Promise<unknown>;
-  disconnect(): Promise<void>;
-}
-
-export class MastraMcpToolClient implements McpToolClient {
-  constructor(
-    private readonly client: MCPClient,
-    private readonly serverName: string,
-    private readonly allowedTools: ReadonlySet<string>,
-  ) {}
-  private getTools() {
-    return this.client.listTools();
-  }
-  async listToolNames() {
-    const prefix = `${this.serverName}_`;
-    return new Set(
-      Object.keys(await this.getTools()).map((name) =>
-        name.startsWith(prefix) ? name.slice(prefix.length) : name,
-      ),
-    );
-  }
-  async call(toolName: string, input: unknown) {
-    if (!this.allowedTools.has(toolName)) throw new Error(`MCP tool not allowed: ${toolName}`);
-    const tool = (await this.getTools())[`${this.serverName}_${toolName}`];
-    if (!tool?.execute) throw new Error(`MCP tool unavailable: ${toolName}`);
-    return tool.execute(input, {
-      ...createObservabilityContext(),
-      observe: noopObserve,
-      requestContext: new RequestContext(),
-    });
-  }
-  disconnect() {
-    return this.client.disconnect();
-  }
 }
 
 const requiredPath = (name: string) => {
@@ -72,9 +35,7 @@ const requiredPath = (name: string) => {
   return value;
 };
 
-export function createQuickBooksMcpToolClient(
-  options: { enablePosting?: boolean } = {},
-): McpToolClient {
+function createQuickBooksMcpToolClient(options: { enablePosting?: boolean } = {}): McpToolClient {
   const serverPath = requiredPath("QBO_MCP_SERVER_PATH"),
     tokenStorePath = requiredPath("QBO_MCP_TOKEN_STORE_PATH");
   const allowedTools = new Set([
@@ -99,7 +60,22 @@ export function createQuickBooksMcpToolClient(
       },
     },
   });
-  return new MastraMcpToolClient(client, "quickbooks", allowedTools);
+  const getTools = () => client.listTools();
+  return {
+    async listToolNames() {
+      return new Set(Object.keys(await getTools()).map((name) => name.replace(/^quickbooks_/, "")));
+    },
+    async call(toolName, input) {
+      if (!allowedTools.has(toolName)) throw new Error(`MCP tool not allowed: ${toolName}`);
+      const tool = (await getTools())[`quickbooks_${toolName}`];
+      if (!tool?.execute) throw new Error(`MCP tool unavailable: ${toolName}`);
+      return tool.execute(input, {
+        ...createObservabilityContext(),
+        observe: noopObserve,
+        requestContext: new RequestContext(),
+      });
+    },
+  };
 }
 
 type QuickBooksReference = { value?: string; name?: string };
@@ -225,99 +201,60 @@ const records = (result: unknown) => {
     );
 };
 
-export interface QuickBooksMcpPostingConfig {
+interface QuickBooksMcpPostingConfig {
   expenseAccountId: string;
   taxAccountId?: string;
   apAccountId?: string;
   lockDirectory?: string;
 }
 
-export class QuickBooksMcpAdapter
-  implements VendorRepository, PurchaseOrderRepository, PostingAdapter
-{
-  private verification?: Promise<void>;
-  private readonly posting = new Map<
-    string,
-    Promise<ReturnType<typeof PostingReceiptSchema.parse>>
-  >();
+class QuickBooksConnector {
+  private verified?: Promise<void>;
   constructor(
     private readonly client: McpToolClient,
-    private readonly poLimit = 1000,
     private readonly postingConfig?: QuickBooksMcpPostingConfig,
-  ) {
-    if (!Number.isInteger(poLimit) || poLimit < 1 || poLimit > 1000)
-      throw new Error("QuickBooks MCP PO limit must be an integer from 1 to 1000");
-  }
-  async verifyTools() {
-    const tools = await this.client.listToolNames(),
-      expected = [...requiredTools, ...(this.postingConfig ? [postingTool] : [])],
-      missing = expected.filter((tool) => !tools.has(tool));
-    const mutations = [...tools].filter((tool) =>
-      this.postingConfig
-        ? /^(update|delete)[_-]/.test(tool)
-        : /^(create|update|delete)[_-]/.test(tool),
-    );
+  ) {}
+  private async verifyTools() {
+    const available = await this.client.listToolNames();
+    const expected = [...requiredTools, ...(this.postingConfig ? [postingTool] : [])];
+    const missing = expected.filter((tool) => !available.has(tool));
     if (missing.length)
       throw new Error(`QuickBooks MCP is missing required tools: ${missing.join(", ")}`);
-    if (mutations.length)
-      throw new Error(
-        `QuickBooks MCP provider refuses unsupported mutation tools: ${mutations.join(", ")}`,
-      );
-  }
-  private async ensureVerified() {
-    const verification = (this.verification ??= this.verifyTools());
-    try {
-      await verification;
-    } catch (error) {
-      if (this.verification === verification) this.verification = undefined;
-      throw error;
-    }
   }
   private async call(tool: (typeof requiredTools)[number] | typeof postingTool, params: unknown) {
     try {
-      await this.ensureVerified();
+      await (this.verified ??= this.verifyTools());
       return records(await this.client.call(tool, { params }));
     } catch (error) {
       if (error instanceof ProviderUnavailableError) throw error;
       throw new ProviderUnavailableError("quickbooks-mcp", tool, { cause: error });
     }
   }
-  async find(input: VendorLookup) {
+  async findVendors(input: VendorLookup) {
     const rows = await this.call("search_vendors", {
       criteria: [{ field: "DisplayName", value: input.name, operator: "=" }],
       fetchAll: true,
     });
     return rows.map((row) => mapVendor(row as QuickBooksVendor));
   }
-  async findByNumber(poNumber: string) {
-    const rows = await this.call("search_purchase_orders", { limit: this.poLimit }),
+  async findPurchaseOrders(poNumber: string) {
+    const rows = await this.call("search_purchase_orders", { limit: 1000 }),
       matches = rows.filter((row) => row.DocNumber === poNumber);
-    if (!matches.length && rows.length === this.poLimit)
+    if (!matches.length && rows.length === 1000)
       throw new ProviderUnavailableError(
         "quickbooks-mcp",
         "search_purchase_orders result window exhausted",
-        {
-          retryable: false,
-        },
       );
     return matches.map((row) => mapPurchaseOrder(row as QuickBooksPurchaseOrder));
   }
-  async billHistorySeed() {
+  async listBills() {
     return (await this.call("search_bills", { fetchAll: true })).map((row) =>
       mapBill(row as QuickBooksBill),
     );
   }
   async postBill(input: PostingRequest) {
     if (!this.postingConfig) throw new Error("QuickBooks MCP posting is disabled");
-    input = PostingRequestSchema.parse(input);
-    const pending = this.posting.get(input.idempotencyKey) ?? this.withPostingLock(input);
-    this.posting.set(input.idempotencyKey, pending);
-    try {
-      return await pending;
-    } finally {
-      if (this.posting.get(input.idempotencyKey) === pending)
-        this.posting.delete(input.idempotencyKey);
-    }
+    return this.withPostingLock(PostingRequestSchema.parse(input));
   }
   private async withPostingLock(input: PostingRequest) {
     const root = this.postingConfig?.lockDirectory ?? resolve("data/qbo-posting-locks");
@@ -430,9 +367,7 @@ export class QuickBooksMcpAdapter
     };
     const created = (await this.call(postingTool, { bill }))[0];
     if (!created?.Id)
-      throw new ProviderUnavailableError("quickbooks-mcp", "create-bill returned no Bill.Id", {
-        retryable: false,
-      });
+      throw new ProviderUnavailableError("quickbooks-mcp", "create-bill returned no Bill.Id");
     return PostingReceiptSchema.parse({
       status: "posted",
       providerId: "quickbooks-mcp",
@@ -441,12 +376,9 @@ export class QuickBooksMcpAdapter
       idempotencyKey: input.idempotencyKey,
     });
   }
-  disconnect() {
-    return this.client.disconnect();
-  }
 }
 
-export function resolveQuickBooksMcpConfiguration(): {
+function resolveQuickBooksMcpConfiguration(): {
   postingEnabled: boolean;
   postingConfig?: QuickBooksMcpPostingConfig;
 } {
@@ -476,35 +408,18 @@ export function resolveQuickBooksMcpConfiguration(): {
   };
 }
 
-export function makeQuickBooksMcpProvider(client?: McpToolClient): AccountingProvider {
+export function makeQuickBooksProvider(client?: McpToolClient): AccountingProvider {
   const { postingEnabled, postingConfig } = resolveQuickBooksMcpConfiguration();
   const resolvedClient = client ?? createQuickBooksMcpToolClient({ enablePosting: postingEnabled });
-  const adapter = new QuickBooksMcpAdapter(resolvedClient, 1000, postingConfig);
-  return assertProvider({
+  const connector = new QuickBooksConnector(resolvedClient, postingConfig);
+  return {
     id: "quickbooks-mcp",
     displayName: "QuickBooks Online MCP",
-    capabilities: {
-      vendors: true,
-      vendorBankDetails: false,
-      vendorStatusRichness: "binary",
-      purchaseOrders: true,
-      goodsReceipts: false,
-      billHistory: true,
-      sanctions: false,
-      invoiceChannel: false,
-      posting: postingEnabled,
-    },
-    vendors: adapter,
-    purchaseOrders: adapter,
-    billHistorySeed: () => adapter.billHistorySeed(),
-    posting: postingEnabled ? adapter : undefined,
-    identityNamespaces: {
-      vendors: "quickbooks",
-      purchaseOrders: "quickbooks",
-      purchaseOrderVendorIds: "quickbooks",
-      billHistoryVendorIds: "quickbooks",
-      postingVendorIds: "quickbooks",
-      postingPurchaseOrders: "quickbooks",
-    },
-  });
+    vendorData: "basic",
+    invoiceChannelAvailable: false,
+    findVendors: connector.findVendors.bind(connector),
+    findPurchaseOrders: connector.findPurchaseOrders.bind(connector),
+    listBills: connector.listBills.bind(connector),
+    ...(postingEnabled && { postBill: connector.postBill.bind(connector) }),
+  };
 }

@@ -7,8 +7,10 @@ import {
   ApprovalRequestSchema,
   invoiceWorkflow,
   signInvoiceSubmission,
+  summarizeDecisions,
 } from "../workflows/invoice.ts";
 import {
+  DecisionReasonSchema,
   InvoiceDraftSchema,
   InvoiceResultSchema,
   type DocumentRef,
@@ -23,15 +25,7 @@ const toolResult = z.object({
   disposition: z.string().nullable().default(null),
   approvalPending: z.boolean(),
   reasons: z.array(z.string()),
-  reasonDetails: z
-    .array(
-      z.object({
-        code: z.string(),
-        message: z.string(),
-        evidence: z.record(z.unknown()).optional(),
-      }),
-    )
-    .default([]),
+  reasonDetails: z.array(DecisionReasonSchema).default([]),
   reviewTypes: z.array(z.string()),
   signals: z.array(z.string()),
   adaptations: z.array(z.string()),
@@ -46,28 +40,39 @@ type WorkflowResult = {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
 
-export const buildExtractionReviewResult = (issues: string[]): ToolResult =>
-  toolResult.parse({
-    status: "needs_extraction_review",
+const response = (
+  status: ToolResult["status"],
+  values: Partial<Omit<ToolResult, "status">> = {},
+): ToolResult => ({
+  status,
+  runId: null,
+  executionStatus: null,
+  disposition: null,
+  approvalPending: false,
+  reasons: [],
+  reasonDetails: [],
+  reviewTypes: [],
+  signals: [],
+  adaptations: [],
+  error: null,
+  ...values,
+});
+
+const buildExtractionReviewResult = (issues: string[]) =>
+  response("needs_extraction_review", {
     runId: null,
-    executionStatus: null,
     disposition: "verify_extraction",
-    approvalPending: false,
     reasons: ["EXTRACTION_VALIDATION_FAILED"],
     reasonDetails: issues.map((message) => ({ code: "EXTRACTION_VALIDATION_FAILED", message })),
     reviewTypes: ["verify_extraction"],
-    signals: [],
-    adaptations: [],
-    error: null,
   });
 
-export const buildSuspendedApprovalResult = (result: WorkflowResult, runId: string): ToolResult => {
+const buildSuspendedApprovalResult = (result: WorkflowResult, runId: string): ToolResult => {
   const payload = (isRecord(result.suspendPayload) ? Object.values(result.suspendPayload) : [])
     .map((value) => ApprovalRequestSchema.safeParse(value))
     .find((candidate) => candidate.success)?.data;
   if (!payload) throw new Error("Approval workflow suspended without a valid approval request");
-  return toolResult.parse({
-    status: "processed",
+  return response("processed", {
     runId,
     executionStatus: "approval_required",
     disposition: "approval_required",
@@ -77,47 +82,27 @@ export const buildSuspendedApprovalResult = (result: WorkflowResult, runId: stri
     reviewTypes: payload.reviewTypes,
     signals: payload.signals,
     adaptations: payload.adaptations,
-    error: null,
   });
 };
 
-const summarize = async (result: WorkflowResult, runId: string, approvalAttempt = false) => {
+const summarize = (result: WorkflowResult, runId: string) => {
   if (result.status === "suspended") {
     return buildSuspendedApprovalResult(result, runId);
   }
   if (result.status !== "success") {
-    return toolResult.parse({
-      status: "failed",
+    return response("failed", {
       runId,
-      executionStatus: null,
-      approvalPending: approvalAttempt,
-      reasons: [],
-      reviewTypes: [],
-      signals: [],
-      adaptations: [],
       error: `Workflow ended ${result.status}`,
     });
   }
   const workflowResult = InvoiceResultSchema.parse(result.result);
-  const reasonDetails = workflowResult.decisions.flatMap((decision) => decision.reasons);
-  const output = toolResult.parse({
-    status: "processed",
+  return response("processed", {
     runId,
     executionStatus: workflowResult.executionStatus,
     disposition: workflowResult.disposition,
-    approvalPending: false,
-    reasons: reasonDetails.map((reason) => reason.code),
-    reasonDetails,
-    reviewTypes: workflowResult.decisions.flatMap((decision) =>
-      decision.reviewType ? [decision.reviewType] : [],
-    ),
-    signals: workflowResult.decisions.flatMap((decision) => decision.signals),
-    adaptations: workflowResult.decisions.flatMap((decision) =>
-      decision.adaptations.map((adaptation) => adaptation.code),
-    ),
+    ...summarizeDecisions(workflowResult),
     error: workflowResult.postingError,
   });
-  return output;
 };
 
 const submitInvoice = createTool({
@@ -132,8 +117,7 @@ const submitInvoice = createTool({
   outputSchema: toolResult,
   execute: async ({ documentId, source, draft }, context) => {
     const requestContext = context?.requestContext as RequestContext<ReviewerContext> | undefined;
-    const candidate = { ...draft, source };
-    const checked = validateExtraction(candidate);
+    const checked = validateExtraction({ ...draft, source });
     if (!checked.extracted) {
       return buildExtractionReviewResult(checked.issues);
     }
@@ -141,7 +125,6 @@ const submitInvoice = createTool({
       id: documentId,
       mimeType: source === "PDF" ? "application/pdf" : "image/jpeg",
       source,
-      sha256: undefined,
     };
     const unsignedWorkflowInput = {
       rawDocumentRef: document,
@@ -153,7 +136,7 @@ const submitInvoice = createTool({
     };
     const run = await invoiceWorkflow.createRun();
     const result = await run.start({ inputData: workflowInput, requestContext });
-    return await summarize(result, run.runId);
+    return summarize(result, run.runId);
   },
 });
 
@@ -175,7 +158,7 @@ const resumeApproval = createTool({
       resumeData: { approved, comment },
       requestContext,
     });
-    return await summarize(result, runId, true);
+    return summarize(result, runId);
   },
 });
 
