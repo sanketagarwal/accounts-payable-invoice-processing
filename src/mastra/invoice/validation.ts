@@ -1,4 +1,5 @@
 import Decimal from "decimal.js";
+import { code as currencyCode } from "currency-codes";
 import {
   ExtractedInvoiceSchema,
   type ExtractedInvoice,
@@ -11,13 +12,18 @@ const isDate = (value: string) =>
   !Number.isNaN(Date.parse(`${value}T00:00:00Z`)) &&
   new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value;
 const blank = (value: string) => value.trim().length === 0;
-// Keep recent ISO additions working on Node releases with older ICU data.
-const currencies = new Set([...Intl.supportedValuesOf("currency"), "XAD", "XCG"]);
-const currencyDigits = (currency: string) =>
-  currencies.has(currency)
-    ? (new Intl.NumberFormat("en", { style: "currency", currency }).resolvedOptions()
-        .maximumFractionDigits ?? 2)
-    : null;
+const recentCurrencies = new Set(["XAD", "XCG"]);
+const currencyDigits = (currency: string) => {
+  if (currencyCode(currency)?.code !== currency && !recentCurrencies.has(currency)) return null;
+  try {
+    return (
+      new Intl.NumberFormat("en", { style: "currency", currency }).resolvedOptions()
+        .maximumFractionDigits ?? 2
+    );
+  } catch {
+    return null;
+  }
+};
 const hasMinorUnitPrecision = (value: number, digits: number) =>
   new Decimal(value).decimalPlaces() <= digits;
 // Unit prices may be sub-minor-unit rates; posted extended amounts must obey the currency scale.
