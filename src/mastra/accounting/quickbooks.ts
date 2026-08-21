@@ -399,7 +399,7 @@ function resolveQuickBooksMcpConfiguration(): {
           expenseAccountId: expenseAccountId!,
           taxAccountId: process.env.QBO_MCP_TAX_ACCOUNT_ID?.trim(),
           apAccountId: process.env.QBO_MCP_AP_ACCOUNT_ID?.trim(),
-          lockDirectory: process.env.QBO_MCP_POSTING_LOCK_DIR?.trim(),
+          lockDirectory: process.env.QBO_MCP_POSTING_LOCK_DIR?.trim() || undefined,
         }
       : undefined,
   };
