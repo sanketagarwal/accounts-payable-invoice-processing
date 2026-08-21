@@ -221,9 +221,19 @@ class QuickBooksConnector {
     if (missing.length)
       throw new Error(`QuickBooks MCP is missing required tools: ${missing.join(", ")}`);
   }
-  private async call(tool: (typeof requiredTools)[number] | typeof postingTool, params: unknown) {
+
+  private async ensureTools() {
     try {
       await (this.verified ??= this.verifyTools());
+    } catch (error) {
+      this.verified = undefined;
+      throw error;
+    }
+  }
+
+  private async call(tool: (typeof requiredTools)[number] | typeof postingTool, params: unknown) {
+    try {
+      await this.ensureTools();
       return records(await this.client.call(tool, { params }));
     } catch (error) {
       if (error instanceof ProviderUnavailableError) throw error;
