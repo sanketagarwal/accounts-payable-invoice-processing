@@ -1,6 +1,7 @@
 import type { InvoiceRuntime } from "../../accounting/providers.ts";
 import { ProviderUnavailableError } from "../../accounting/types.ts";
-import type { AssessmentState, NormalizedInvoice } from "../schema.ts";
+import type { AssessmentState, NormalizedInvoice, StepDecision } from "../schema.ts";
+import { confidenceProblems } from "../validation.ts";
 import { decide } from "./decision.ts";
 
 const emptyAssessment = (invoice: NormalizedInvoice): AssessmentState => ({
@@ -17,7 +18,15 @@ export function makeVendorValidation(runtime: InvoiceRuntime) {
 
   return async (invoice: NormalizedInvoice) => {
     const state = emptyAssessment(invoice);
-    if (invoice.overallConfidence < runtime.policy.lowConfidenceThreshold) {
+    const { uncertainFields, missingConfidence } = confidenceProblems(
+      invoice,
+      runtime.policy.lowConfidenceThreshold,
+    );
+    if (
+      invoice.overallConfidence < runtime.policy.lowConfidenceThreshold ||
+      uncertainFields.length ||
+      missingConfidence.length
+    ) {
       return decide(state, {
         step: "extraction",
         outcome: "verify_extraction",
@@ -25,7 +34,11 @@ export function makeVendorValidation(runtime: InvoiceRuntime) {
           {
             code: "LOW_EXTRACTION_CONFIDENCE",
             message: "Verify the extracted fields before financial controls run",
-            evidence: { overallConfidence: invoice.overallConfidence },
+            evidence: {
+              overallConfidence: invoice.overallConfidence,
+              uncertainFields,
+              missingConfidence,
+            },
           },
         ],
       });
@@ -58,13 +71,13 @@ export function makeVendorValidation(runtime: InvoiceRuntime) {
         vendor.taxId &&
         canonicalId(invoice.vendorTaxId) !== canonicalId(vendor.taxId),
       );
-      const mismatchReason = taxIdMismatch
+      const mismatchReason: StepDecision["reasons"][number] | null = taxIdMismatch
         ? {
             code: "VENDOR_TAX_ID_MISMATCH",
             message: "Printed and canonical vendor tax IDs conflict",
             evidence: { printed: invoice.vendorTaxId, canonical: vendor.taxId },
           }
-        : undefined;
+        : null;
       if (vendor.status !== "approved")
         return decide(state, {
           step: "vendor",
@@ -95,9 +108,13 @@ export function makeVendorValidation(runtime: InvoiceRuntime) {
         });
 
       if (mismatchReason) {
+        const uncertain = invoice.confidence.some(
+          ({ field, confidence }) =>
+            field === "vendorTaxId" && confidence < runtime.policy.lowConfidenceThreshold,
+        );
         return decide(state, {
           step: "vendor",
-          outcome: "review",
+          outcome: uncertain ? "verify_extraction" : "review",
           reasons: [mismatchReason],
         });
       }

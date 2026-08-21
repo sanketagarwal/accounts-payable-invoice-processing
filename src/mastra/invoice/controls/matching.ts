@@ -1,6 +1,7 @@
 import type { InvoiceRuntime } from "../../accounting/providers.ts";
 import { ProviderUnavailableError } from "../../accounting/types.ts";
 import type { AssessmentState, PurchaseOrder } from "../schema.ts";
+import { hasLowConfidence } from "../validation.ts";
 import { decide } from "./decision.ts";
 
 const compareLines = (state: AssessmentState, order: PurchaseOrder, tolerance: number) => {
@@ -76,9 +77,14 @@ export function makeInvoiceMatch(runtime: InvoiceRuntime) {
         ...compareLines(state, order, runtime.policy.amountToleranceMinor),
       ];
       if (mismatches.length) {
+        const verify = hasLowConfidence(
+          state.invoice,
+          ["vendorName", "poNumber", "currency", "total", "lines"],
+          runtime.policy.lowConfidenceThreshold,
+        );
         return decide(state, {
           step: "match",
-          outcome: "review",
+          outcome: verify ? "verify_extraction" : "review",
           reasons: [
             {
               code: "PO_MISMATCH",
@@ -131,9 +137,12 @@ export function makeInvoiceMatch(runtime: InvoiceRuntime) {
         state.invoice.lines.some(
           (line, index) => (received.get(line.sku ?? `line:${index}`) ?? 0) < line.qty,
         );
+      const verify =
+        receiptMismatch &&
+        hasLowConfidence(state.invoice, ["lines", "qty"], runtime.policy.lowConfidenceThreshold);
       return decide(state, {
         step: "match",
-        outcome: receiptMismatch ? "review" : "pass",
+        outcome: receiptMismatch ? (verify ? "verify_extraction" : "review") : "pass",
         reasons: [
           {
             code: receiptMismatch ? "RECEIPT_MISMATCH" : "THREE_WAY_MATCH",

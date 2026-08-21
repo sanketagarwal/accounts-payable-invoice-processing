@@ -1,13 +1,16 @@
 import { z } from "zod";
 import Decimal from "decimal.js";
+import { createHash } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
-import { isAbsolute } from "node:path";
+import { mkdir, rmdir } from "node:fs/promises";
+import { isAbsolute, resolve } from "node:path";
 import { createObservabilityContext } from "@mastra/core/observability";
 import { RequestContext } from "@mastra/core/request-context";
 import { noopObserve } from "@mastra/core/tools";
 import { MCPClient } from "@mastra/mcp";
 import { ProviderUnavailableError, type AccountingProvider, type VendorLookup } from "./types.ts";
 import {
+  PostingRequestSchema,
   PriorInvoiceSchema,
   PurchaseOrderSchema,
   VendorRecordSchema,
@@ -161,10 +164,12 @@ const mapBill = (bill: QuickBooksBill) => {
 
 const requiredTools = ["search_vendors", "search_purchase_orders", "search_bills"] as const;
 const postingTool = "create-bill" as const;
-const ToolResultSchema = z.object({
-  isError: z.boolean().optional(),
-  content: z.array(z.object({ type: z.string(), text: z.string().optional() })),
-});
+const ToolResultSchema = z
+  .object({
+    isError: z.boolean().optional(),
+    content: z.array(z.object({ type: z.string(), text: z.string().optional() }).passthrough()),
+  })
+  .passthrough();
 const records = (result: unknown) => {
   const parsed = ToolResultSchema.parse(result),
     texts = parsed.content.flatMap((item) =>
@@ -173,9 +178,13 @@ const records = (result: unknown) => {
   if (parsed.isError) throw new Error(texts.join("\n") || "MCP tool returned an error");
   return texts
     .flatMap((text) => {
-      if (/^Found \d+ records?:$/i.test(text.trim())) return [];
-      const value: unknown = JSON.parse(text);
-      return Array.isArray(value) ? value : [value];
+      try {
+        const value: unknown = JSON.parse(text);
+        return Array.isArray(value) ? value : [value];
+      } catch {
+        if (/^Found \d+ records?:$/i.test(text.trim())) return [];
+        throw new Error(`MCP tool returned non-JSON output: ${text}`);
+      }
     })
     .filter(
       (value): value is Record<string, unknown> =>
@@ -187,11 +196,11 @@ interface QuickBooksMcpPostingConfig {
   expenseAccountId: string;
   taxAccountId?: string;
   apAccountId?: string;
+  lockDirectory?: string;
 }
 
 class QuickBooksConnector {
   private verified?: Promise<void>;
-  private postingQueue = Promise.resolve();
   constructor(
     private readonly client: McpToolClient,
     private readonly postingConfig?: QuickBooksMcpPostingConfig,
@@ -246,12 +255,33 @@ class QuickBooksConnector {
   }
   async postBill(input: PostingRequest) {
     if (!this.postingConfig) throw new Error("QuickBooks MCP posting is disabled");
-    const posting = this.postingQueue.then(() => this.post(input));
-    this.postingQueue = posting.then(
-      () => undefined,
-      () => undefined,
-    );
-    return posting;
+    return this.withPostingLock(PostingRequestSchema.parse(input));
+  }
+  private async withPostingLock(input: PostingRequest) {
+    const root = this.postingConfig?.lockDirectory ?? resolve("data/qbo-posting-locks");
+    const invoiceKey = input.invoice.invoiceNumber.trim().toLowerCase();
+    const lock = resolve(root, createHash("sha256").update(invoiceKey).digest("hex"));
+    await mkdir(root, { recursive: true, mode: 0o700 });
+    const deadline = Date.now() + 15_000;
+    while (true) {
+      try {
+        await mkdir(lock, { mode: 0o700 });
+        break;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+        if (Date.now() >= deadline)
+          throw new ProviderUnavailableError(
+            "quickbooks-mcp",
+            "posting idempotency lock is held; reconcile the invoice before retrying",
+          );
+        await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+      }
+    }
+    try {
+      return await this.post(input);
+    } finally {
+      await rmdir(lock).catch(() => undefined);
+    }
   }
   private async post(input: PostingRequest): Promise<PostingReceipt> {
     const config = this.postingConfig;
@@ -369,6 +399,7 @@ function resolveQuickBooksMcpConfiguration(): {
           expenseAccountId: expenseAccountId!,
           taxAccountId: process.env.QBO_MCP_TAX_ACCOUNT_ID?.trim(),
           apAccountId: process.env.QBO_MCP_AP_ACCOUNT_ID?.trim(),
+          lockDirectory: process.env.QBO_MCP_POSTING_LOCK_DIR?.trim(),
         }
       : undefined,
   };

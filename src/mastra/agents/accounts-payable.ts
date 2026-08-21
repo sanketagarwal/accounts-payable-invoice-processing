@@ -34,6 +34,7 @@ type WorkflowResult = {
 };
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
+
 const response = (values: z.input<typeof toolResult>): ToolResult => toolResult.parse(values);
 
 const buildExtractionReviewResult = (issues: string[]) =>
@@ -140,7 +141,7 @@ export const accountsPayableAgent = new Agent({
 
 For a PDF, PNG, or JPEG:
 - Read only values visible in the document. Leave unreadable optional fields empty.
-- Include an honest overall confidence score.
+- Include honest overall and field-level confidence. Use indexed line fields such as lines[0].qty.
 - Judge confidence from the rendered document, not whether a PDF has a text layer.
 - Call submit-invoice-for-processing once, then report its decision and evidence.
 

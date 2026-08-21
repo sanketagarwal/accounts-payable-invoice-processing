@@ -7,6 +7,10 @@ const LineItemSchema = z.object({
   unitPrice: z.number().finite(),
   lineTotal: z.number().finite().nullable(),
 });
+const FieldConfidenceSchema = z.object({
+  field: z.string(),
+  confidence: z.number().min(0).max(1),
+});
 export const ExtractedInvoiceSchema = z.object({
   invoiceNumber: z.string(),
   vendorName: z.string(),
@@ -18,6 +22,7 @@ export const ExtractedInvoiceSchema = z.object({
   tax: z.number().finite().nullable(),
   total: z.number().finite(),
   lines: z.array(LineItemSchema),
+  confidence: z.array(FieldConfidenceSchema),
   overallConfidence: z.number().min(0).max(1),
   source: z.enum(["PDF", "image"]).default("PDF"),
 });
@@ -41,6 +46,7 @@ export const InvoiceDraftSchema = z.object({
   tax: z.number().nullable().optional(),
   total: z.number().nullable().optional(),
   lines: z.array(DraftLineItemSchema).optional(),
+  confidence: z.array(FieldConfidenceSchema).default([]),
   overallConfidence: z.number().min(0).max(1).nullable().optional(),
   source: z.enum(["PDF", "image"]).optional(),
 });
@@ -87,6 +93,7 @@ export const NormalizedInvoiceSchema = z.object({
   taxMinor: MoneySchema.nullable(),
   totalMinor: MoneySchema,
   lines: z.array(NormalizedLineSchema),
+  confidence: z.array(FieldConfidenceSchema),
   overallConfidence: z.number().min(0).max(1),
 });
 export type NormalizedInvoice = z.infer<typeof NormalizedInvoiceSchema>;
