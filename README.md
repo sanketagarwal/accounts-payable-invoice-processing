@@ -12,7 +12,7 @@ The template includes a sample invoice and local vendor, PO, receipt, and invoic
 ## Setup
 
 ```bash
-git clone --branch feat/mastra-template-studio --single-branch https://github.com/sanketagarwal/accounts-payable-invoice-processing.git
+git clone https://github.com/sanketagarwal/accounts-payable-invoice-processing.git
 cd accounts-payable-invoice-processing
 npm install
 cp .env.example .env
