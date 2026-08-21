@@ -1,5 +1,4 @@
 import Decimal from "decimal.js";
-import type { ExtractedInvoice } from "./schema.ts";
 import {
   NormalizedInvoiceSchema,
   type InvoiceWorkflowInput,
@@ -24,17 +23,12 @@ export function toMajorUnits(value: number, currency: string): number {
   return new Decimal(value).div(new Decimal(10).pow(exponent(currency))).toNumber();
 }
 export function normalizeInvoice(output: InvoiceWorkflowInput): NormalizedInvoice {
-  const invoice: ExtractedInvoice = output.extractedResult;
+  const invoice = output.extractedResult;
   const money = (value: number | null) =>
     value === null ? null : toMinorUnits(value, invoice.currency);
   return NormalizedInvoiceSchema.parse({
+    ...invoice,
     document: output.rawDocumentRef,
-    invoiceNumber: invoice.invoiceNumber,
-    vendorName: invoice.vendorName,
-    vendorTaxId: invoice.vendorTaxId,
-    poNumber: invoice.poNumber,
-    invoiceDate: invoice.invoiceDate,
-    currency: invoice.currency,
     subtotalMinor: money(invoice.subtotal),
     taxMinor: money(invoice.tax),
     totalMinor: toMinorUnits(invoice.total, invoice.currency),
@@ -45,7 +39,5 @@ export function normalizeInvoice(output: InvoiceWorkflowInput): NormalizedInvoic
       unitPriceMinor: toMinorUnits(line.unitPrice, invoice.currency),
       lineTotalMinor: money(line.lineTotal),
     })),
-    confidence: invoice.confidence,
-    overallConfidence: invoice.overallConfidence,
   });
 }

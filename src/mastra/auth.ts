@@ -3,9 +3,10 @@ import { SimpleAuth } from "@mastra/core/server";
 import { isIP } from "node:net";
 import type { ReviewerContext } from "./invoice/schema.ts";
 
-export type ApUser = { id: string; name: string; role: "ap_approver" | "viewer" };
+type ApUser = { id: string; name: string; role: "ap_approver" | "viewer" };
 const configuredToken = process.env.MASTRA_AUTH_TOKEN?.trim(),
-  configuredUserId = process.env.MASTRA_AUTH_USER_ID?.trim();
+  configuredUserId = process.env.MASTRA_AUTH_USER_ID?.trim(),
+  production = ["production", "prod"].includes(process.env.NODE_ENV?.trim().toLowerCase() ?? "");
 
 export const serverHost = process.env.MASTRA_HOST?.trim() || "127.0.0.1";
 
@@ -24,20 +25,13 @@ export const authConfigurationError =
     ? "Set both MASTRA_AUTH_TOKEN and MASTRA_AUTH_USER_ID, or leave both unset"
     : undefined;
 
-export function isLocalFixtureDemo() {
-  const authToken = process.env.MASTRA_AUTH_TOKEN?.trim(),
-    authUserId = process.env.MASTRA_AUTH_USER_ID?.trim(),
-    host = process.env.MASTRA_HOST?.trim() || "127.0.0.1",
-    nodeEnvironment = process.env.NODE_ENV?.trim().toLowerCase(),
-    isDevelopment = nodeEnvironment !== "production" && nodeEnvironment !== "prod";
-  return (
-    !authToken &&
-    !authUserId &&
-    isDevelopment &&
-    isLoopbackHost(host) &&
-    (process.env.ACCOUNTING_PROVIDER?.trim() || "fixture") === "fixture"
-  );
-}
+const localDemo =
+  !configuredToken &&
+  !configuredUserId &&
+  !production &&
+  isLoopbackHost(serverHost) &&
+  (process.env.ACCOUNTING_PROVIDER?.trim() || "fixture") === "fixture";
+export const isLocalFixtureDemo = () => localDemo;
 
 export const apAuth =
   configuredToken && configuredUserId
@@ -55,13 +49,7 @@ export const apAuth =
 
 export async function getCurrentApUser(request: Request): Promise<ApUser | null> {
   if (apAuth) return apAuth.getCurrentUser(request);
-  if (isLocalFixtureDemo())
-    return {
-      id: "local-reviewer",
-      name: "Local reviewer",
-      role: "ap_approver",
-    };
-  return null;
+  return localDemo ? { id: "local-reviewer", name: "Local reviewer", role: "ap_approver" } : null;
 }
 
 export function setAuthenticatedReviewer(

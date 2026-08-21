@@ -77,26 +77,12 @@ export const ApprovalRequestSchema = z.object({
   currency: z.string(),
   totalMinor: z.number().int().safe(),
   disposition: z.literal("approval_required"),
-  reasons: z.array(z.string()),
-  reasonDetails: z.array(DecisionReasonSchema),
-  reviewTypes: z.array(z.string()),
-  signals: z.array(z.string()),
-  adaptations: z.array(z.string()),
+  reasons: z.array(DecisionReasonSchema),
   invoiceDigest: z.string().regex(/^[a-f0-9]{64}$/),
 });
 
-export const summarizeDecisions = (assessment: FinalAssessment) => {
-  const reasonDetails = assessment.decisions.flatMap(({ reasons }) => reasons);
-  return {
-    reasons: reasonDetails.map(({ code }) => code),
-    reasonDetails,
-    reviewTypes: assessment.decisions.flatMap(({ reviewType }) => (reviewType ? [reviewType] : [])),
-    signals: assessment.decisions.flatMap(({ signals }) => signals),
-    adaptations: assessment.decisions.flatMap(({ adaptations }) =>
-      adaptations.map(({ code }) => code),
-    ),
-  };
-};
+export const decisionReasons = (assessment: FinalAssessment) =>
+  assessment.decisions.flatMap(({ reasons }) => reasons);
 
 const invoiceDigest = (assessment: FinalAssessment) =>
   createHash("sha256")
@@ -164,7 +150,7 @@ const approvalStep = createStep({
         currency: inputData.invoice.currency,
         totalMinor: inputData.invoice.totalMinor,
         disposition: "approval_required",
-        ...summarizeDecisions(inputData),
+        reasons: decisionReasons(inputData),
         invoiceDigest: invoiceDigest(inputData),
       });
     }
@@ -195,7 +181,7 @@ const postingStep = createStep({
       return {
         ...inputData,
         executionStatus: "posting_unavailable" as const,
-        postingError: `${runtime.provider.displayName} is connected read-only`,
+        postingError: `${runtime.provider.id} is connected read-only`,
       };
     }
 
@@ -224,7 +210,6 @@ const postingStep = createStep({
         invoiceDate: inputData.invoice.invoiceDate,
         currency: inputData.invoice.currency,
         totalMinor: inputData.invoice.totalMinor,
-        channel: null,
       });
 
       return {

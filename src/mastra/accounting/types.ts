@@ -12,9 +12,6 @@ export type VendorLookup = { name: string; taxId?: string | null };
 
 export interface AccountingProvider {
   id: string;
-  displayName: string;
-  vendorData: "full" | "basic";
-  invoiceChannelAvailable: boolean;
   findVendors(input: VendorLookup): Promise<VendorRecord[]>;
   findPurchaseOrders(poNumber: string): Promise<PurchaseOrder[]>;
   findReceipts?(purchaseOrderId: string): Promise<GoodsReceipt[]>;
@@ -37,19 +34,8 @@ export interface InvoiceHistory {
 export type SanctionsScreener = (vendor: VendorRecord) => Promise<SanctionsResult>;
 
 export class ProviderUnavailableError extends Error {
-  constructor(
-    readonly providerId: string,
-    readonly operation: string,
-    options?: { cause?: unknown },
-  ) {
+  constructor(providerId: string, operation: string, options?: { cause?: unknown }) {
     super(`${providerId} unavailable during ${operation}`, options);
     this.name = "ProviderUnavailableError";
-  }
-}
-
-export class PostingConflictError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "PostingConflictError";
   }
 }

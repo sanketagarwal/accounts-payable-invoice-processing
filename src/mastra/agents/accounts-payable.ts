@@ -5,31 +5,26 @@ import { Memory } from "@mastra/memory";
 import { z } from "zod";
 import {
   ApprovalRequestSchema,
+  decisionReasons,
   invoiceWorkflow,
   signInvoiceSubmission,
-  summarizeDecisions,
 } from "../workflows/invoice.ts";
 import {
   DecisionReasonSchema,
   InvoiceDraftSchema,
   InvoiceResultSchema,
-  type DocumentRef,
   type ReviewerContext,
 } from "../invoice/schema.ts";
 import { validateExtraction } from "../invoice/validation.ts";
 
 const toolResult = z.object({
   status: z.enum(["processed", "needs_extraction_review", "failed"]),
-  runId: z.string().nullable(),
-  executionStatus: z.string().nullable(),
+  runId: z.string().nullable().default(null),
+  executionStatus: z.string().nullable().default(null),
   disposition: z.string().nullable().default(null),
-  approvalPending: z.boolean(),
-  reasons: z.array(z.string()),
-  reasonDetails: z.array(DecisionReasonSchema).default([]),
-  reviewTypes: z.array(z.string()),
-  signals: z.array(z.string()),
-  adaptations: z.array(z.string()),
-  error: z.string().nullable(),
+  approvalPending: z.boolean().default(false),
+  reasons: z.array(DecisionReasonSchema).default([]),
+  error: z.string().nullable().default(null),
 });
 type ToolResult = z.infer<typeof toolResult>;
 type WorkflowResult = {
@@ -39,68 +34,43 @@ type WorkflowResult = {
 };
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
-
-const response = (
-  status: ToolResult["status"],
-  values: Partial<Omit<ToolResult, "status">> = {},
-): ToolResult => ({
-  status,
-  runId: null,
-  executionStatus: null,
-  disposition: null,
-  approvalPending: false,
-  reasons: [],
-  reasonDetails: [],
-  reviewTypes: [],
-  signals: [],
-  adaptations: [],
-  error: null,
-  ...values,
-});
+const response = (values: z.input<typeof toolResult>): ToolResult => toolResult.parse(values);
 
 const buildExtractionReviewResult = (issues: string[]) =>
-  response("needs_extraction_review", {
-    runId: null,
+  response({
+    status: "needs_extraction_review",
     disposition: "verify_extraction",
-    reasons: ["EXTRACTION_VALIDATION_FAILED"],
-    reasonDetails: issues.map((message) => ({ code: "EXTRACTION_VALIDATION_FAILED", message })),
-    reviewTypes: ["verify_extraction"],
+    reasons: issues.map((message) => ({ code: "EXTRACTION_VALIDATION_FAILED", message })),
   });
-
-const buildSuspendedApprovalResult = (result: WorkflowResult, runId: string): ToolResult => {
-  const payload = (isRecord(result.suspendPayload) ? Object.values(result.suspendPayload) : [])
-    .map((value) => ApprovalRequestSchema.safeParse(value))
-    .find((candidate) => candidate.success)?.data;
-  if (!payload) throw new Error("Approval workflow suspended without a valid approval request");
-  return response("processed", {
-    runId,
-    executionStatus: "approval_required",
-    disposition: "approval_required",
-    approvalPending: true,
-    reasons: payload.reasons,
-    reasonDetails: payload.reasonDetails,
-    reviewTypes: payload.reviewTypes,
-    signals: payload.signals,
-    adaptations: payload.adaptations,
-  });
-};
 
 const summarize = (result: WorkflowResult, runId: string) => {
   if (result.status === "suspended") {
-    return buildSuspendedApprovalResult(result, runId);
+    const payload = (isRecord(result.suspendPayload) ? Object.values(result.suspendPayload) : [])
+      .map((value) => ApprovalRequestSchema.safeParse(value))
+      .find((candidate) => candidate.success)?.data;
+    if (!payload) throw new Error("Approval workflow suspended without a valid request");
+    return response({
+      ...payload,
+      status: "processed",
+      runId,
+      executionStatus: "approval_required",
+      approvalPending: true,
+    });
   }
   if (result.status !== "success") {
-    return response("failed", {
+    return response({
+      status: "failed",
       runId,
       error: `Workflow ended ${result.status}`,
     });
   }
   const workflowResult = InvoiceResultSchema.parse(result.result);
-  return response("processed", {
+  return response({
+    status: "processed",
     runId,
     executionStatus: workflowResult.executionStatus,
     disposition: workflowResult.disposition,
-    ...summarizeDecisions(workflowResult),
+    reasons: decisionReasons(workflowResult),
     error: workflowResult.postingError,
   });
 };
@@ -121,11 +91,11 @@ const submitInvoice = createTool({
     if (!checked.extracted) {
       return buildExtractionReviewResult(checked.issues);
     }
-    const document: DocumentRef = {
+    const document = {
       id: documentId,
       mimeType: source === "PDF" ? "application/pdf" : "image/jpeg",
       source,
-    };
+    } as const;
     const unsignedWorkflowInput = {
       rawDocumentRef: document,
       extractedResult: checked.extracted,
@@ -170,7 +140,7 @@ export const accountsPayableAgent = new Agent({
 
 For a PDF, PNG, or JPEG:
 - Read only values visible in the document. Leave unreadable optional fields empty.
-- Include honest overall and field-level confidence. Use indexed line fields such as lines[0].qty.
+- Include an honest overall confidence score.
 - Judge confidence from the rendered document, not whether a PDF has a text layer.
 - Call submit-invoice-for-processing once, then report its decision and evidence.
 

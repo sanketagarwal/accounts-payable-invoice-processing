@@ -7,10 +7,6 @@ const LineItemSchema = z.object({
   unitPrice: z.number().finite(),
   lineTotal: z.number().finite().nullable(),
 });
-const FieldConfidenceSchema = z.object({
-  field: z.string(),
-  confidence: z.number().min(0).max(1),
-});
 export const ExtractedInvoiceSchema = z.object({
   invoiceNumber: z.string(),
   vendorName: z.string(),
@@ -22,7 +18,6 @@ export const ExtractedInvoiceSchema = z.object({
   tax: z.number().finite().nullable(),
   total: z.number().finite(),
   lines: z.array(LineItemSchema),
-  confidence: z.array(FieldConfidenceSchema),
   overallConfidence: z.number().min(0).max(1),
   source: z.enum(["PDF", "image"]).default("PDF"),
 });
@@ -46,7 +41,6 @@ export const InvoiceDraftSchema = z.object({
   tax: z.number().nullable().optional(),
   total: z.number().nullable().optional(),
   lines: z.array(DraftLineItemSchema).optional(),
-  confidence: z.array(FieldConfidenceSchema).default([]),
   overallConfidence: z.number().min(0).max(1).nullable().optional(),
   source: z.enum(["PDF", "image"]).optional(),
 });
@@ -56,10 +50,7 @@ const DocumentRefSchema = z.object({
   id: z.string(),
   mimeType: z.enum(["application/pdf", "image/png", "image/jpeg"]),
   source: z.enum(["PDF", "image"]).default("PDF"),
-  localPath: z.string().optional(),
-  sha256: z.string().optional(),
 });
-export type DocumentRef = z.infer<typeof DocumentRefSchema>;
 
 export const ReviewerContextSchema = z.object({ reviewerId: z.string().trim().min(1).optional() });
 export type ReviewerContext = z.infer<typeof ReviewerContextSchema>;
@@ -70,22 +61,10 @@ export const DecisionReasonSchema = z.object({
   message: z.string(),
   evidence: z.record(z.unknown()).optional(),
 });
-const AdaptationSchema = z.enum([
-  "GOODS_RECEIPTS_UNAVAILABLE",
-  "VENDOR_BANK_DETAILS_UNAVAILABLE",
-  "SANCTIONS_SOURCE_FALLBACK",
-  "VENDOR_STATUS_BINARY",
-  "BILL_HISTORY_SEED_UNAVAILABLE",
-  "INVOICE_CHANNEL_UNAVAILABLE",
-]);
 const StepDecisionSchema = z.object({
   step: z.string(),
   outcome: z.enum(["pass", "review", "blocked", "unknown_retry", "verify_extraction"]),
-  reviewType: z.string().nullable(),
   reasons: z.array(DecisionReasonSchema),
-  signals: z.array(z.string()).default([]),
-  adaptations: z.array(z.object({ code: AdaptationSchema, providerId: z.string() })).default([]),
-  sources: z.record(z.string()).default({}),
 });
 export type StepDecision = z.infer<typeof StepDecisionSchema>;
 
@@ -108,7 +87,6 @@ export const NormalizedInvoiceSchema = z.object({
   taxMinor: MoneySchema.nullable(),
   totalMinor: MoneySchema,
   lines: z.array(NormalizedLineSchema),
-  confidence: z.array(FieldConfidenceSchema),
   overallConfidence: z.number().min(0).max(1),
 });
 export type NormalizedInvoice = z.infer<typeof NormalizedInvoiceSchema>;
@@ -118,12 +96,10 @@ export const VendorRecordSchema = z.object({
   name: z.string(),
   taxId: z.string().nullable(),
   status: z.enum(["approved", "inactive", "on_hold", "blocked"]),
-  bankDetailsFingerprint: z.string().nullable(),
 });
 export type VendorRecord = z.infer<typeof VendorRecordSchema>;
 const PurchaseOrderLineSchema = z.object({
   sku: z.string().nullable(),
-  description: z.string(),
   qty: z.number(),
   unitPriceMinor: MoneySchema,
   lineTotalMinor: MoneySchema,
@@ -137,13 +113,11 @@ export const PurchaseOrderSchema = z.object({
   lines: z.array(PurchaseOrderLineSchema),
 });
 export type PurchaseOrder = z.infer<typeof PurchaseOrderSchema>;
-const GoodsReceiptSchema = z.object({
-  id: z.string(),
-  purchaseOrderId: z.string(),
-  receivedAt: z.string(),
-  lines: z.array(z.object({ sku: z.string().nullable(), qty: z.number() })),
-});
-export type GoodsReceipt = z.infer<typeof GoodsReceiptSchema>;
+export type GoodsReceipt = {
+  id: string;
+  purchaseOrderId: string;
+  lines: Array<{ sku: string | null; qty: number }>;
+};
 export const PriorInvoiceSchema = z.object({
   id: z.string(),
   vendorId: z.string(),
@@ -151,15 +125,9 @@ export const PriorInvoiceSchema = z.object({
   invoiceDate: z.string(),
   currency: z.string(),
   totalMinor: MoneySchema,
-  channel: z.string().nullable(),
 });
 export type PriorInvoice = z.infer<typeof PriorInvoiceSchema>;
-const SanctionsResultSchema = z.object({
-  matched: z.boolean(),
-  list: z.string().nullable(),
-  reference: z.string().nullable(),
-});
-export type SanctionsResult = z.infer<typeof SanctionsResultSchema>;
+export type SanctionsResult = { matched: boolean; list: string | null; reference: string | null };
 const PolicyConfigSchema = z.object({
   approvalThresholdMinor: MoneySchema,
   amountToleranceMinor: MoneySchema,
@@ -180,10 +148,7 @@ const AssessmentStateSchema = z.object({
   invoice: NormalizedInvoiceSchema,
   vendor: VendorRecordSchema.nullable(),
   purchaseOrder: PurchaseOrderSchema.nullable(),
-  receipts: z.array(GoodsReceiptSchema),
   decisions: z.array(StepDecisionSchema),
-  matchMode: z.enum(["two_way", "three_way"]).nullable(),
-  duplicateIds: z.array(z.string()),
 });
 export type AssessmentState = z.infer<typeof AssessmentStateSchema>;
 export const FinalAssessmentSchema = AssessmentStateSchema.extend({
@@ -236,7 +201,7 @@ export const PostingRequestSchema = z
       });
   });
 export type PostingRequest = z.infer<typeof PostingRequestSchema>;
-export const PostingReceiptSchema = z.object({
+const PostingReceiptSchema = z.object({
   status: z.enum(["posted", "already_posted"]),
   providerId: z.string().min(1),
   externalBillId: z.string().min(1),

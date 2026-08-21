@@ -1,25 +1,17 @@
 import { z } from "zod";
 import Decimal from "decimal.js";
-import { createHash } from "node:crypto";
-import { mkdir, rmdir } from "node:fs/promises";
 import { existsSync, statSync } from "node:fs";
-import { isAbsolute, resolve } from "node:path";
+import { isAbsolute } from "node:path";
 import { createObservabilityContext } from "@mastra/core/observability";
 import { RequestContext } from "@mastra/core/request-context";
 import { noopObserve } from "@mastra/core/tools";
 import { MCPClient } from "@mastra/mcp";
+import { ProviderUnavailableError, type AccountingProvider, type VendorLookup } from "./types.ts";
 import {
-  PostingConflictError,
-  ProviderUnavailableError,
-  type AccountingProvider,
-  type VendorLookup,
-} from "./types.ts";
-import {
-  PostingReceiptSchema,
-  PostingRequestSchema,
   PriorInvoiceSchema,
   PurchaseOrderSchema,
   VendorRecordSchema,
+  type PostingReceipt,
   type PostingRequest,
 } from "../invoice/schema.ts";
 import { toMajorUnits, toMinorUnits } from "../invoice/money.ts";
@@ -81,7 +73,6 @@ function createQuickBooksMcpToolClient(options: { enablePosting?: boolean } = {}
 type QuickBooksReference = { value?: string; name?: string };
 type QuickBooksLine = {
   Amount?: number;
-  Description?: string;
   ItemBasedExpenseLineDetail?: {
     ItemRef?: QuickBooksReference;
     Qty?: number;
@@ -122,7 +113,6 @@ const mapVendor = (vendor: QuickBooksVendor) =>
     name: required(vendor.DisplayName, "Vendor.DisplayName"),
     taxId: vendor.TaxIdentifier ?? null,
     status: vendor.Active === false ? "inactive" : "approved",
-    bankDetailsFingerprint: null,
   });
 
 const mapPurchaseOrder = (order: QuickBooksPurchaseOrder) => {
@@ -145,7 +135,6 @@ const mapPurchaseOrder = (order: QuickBooksPurchaseOrder) => {
           // Match the human-readable item name printed on an invoice. QBO's
           // internal ItemRef ID is still available to the connector when posting.
           sku: detail.ItemRef?.name ?? detail.ItemRef?.value ?? null,
-          description: line.Description ?? detail.ItemRef?.name ?? "",
           qty: quantity,
           unitPriceMinor: toMinorUnits(
             detail.UnitPrice ?? (quantity ? amount / quantity : 0),
@@ -167,18 +156,15 @@ const mapBill = (bill: QuickBooksBill) => {
     invoiceDate: required(bill.TxnDate, "Bill.TxnDate"),
     currency,
     totalMinor: toMinorUnits(bill.TotalAmt ?? 0, currency),
-    channel: null,
   });
 };
 
 const requiredTools = ["search_vendors", "search_purchase_orders", "search_bills"] as const;
 const postingTool = "create-bill" as const;
-const ToolResultSchema = z
-  .object({
-    isError: z.boolean().optional(),
-    content: z.array(z.object({ type: z.string(), text: z.string().optional() }).passthrough()),
-  })
-  .passthrough();
+const ToolResultSchema = z.object({
+  isError: z.boolean().optional(),
+  content: z.array(z.object({ type: z.string(), text: z.string().optional() })),
+});
 const records = (result: unknown) => {
   const parsed = ToolResultSchema.parse(result),
     texts = parsed.content.flatMap((item) =>
@@ -187,13 +173,9 @@ const records = (result: unknown) => {
   if (parsed.isError) throw new Error(texts.join("\n") || "MCP tool returned an error");
   return texts
     .flatMap((text) => {
-      try {
-        const value: unknown = JSON.parse(text);
-        return Array.isArray(value) ? value : [value];
-      } catch {
-        if (/^Found \d+ records?:$/i.test(text.trim())) return [];
-        throw new Error(`MCP tool returned non-JSON output: ${text}`);
-      }
+      if (/^Found \d+ records?:$/i.test(text.trim())) return [];
+      const value: unknown = JSON.parse(text);
+      return Array.isArray(value) ? value : [value];
     })
     .filter(
       (value): value is Record<string, unknown> =>
@@ -205,11 +187,11 @@ interface QuickBooksMcpPostingConfig {
   expenseAccountId: string;
   taxAccountId?: string;
   apAccountId?: string;
-  lockDirectory?: string;
 }
 
 class QuickBooksConnector {
   private verified?: Promise<void>;
+  private postingQueue = Promise.resolve();
   constructor(
     private readonly client: McpToolClient,
     private readonly postingConfig?: QuickBooksMcpPostingConfig,
@@ -264,39 +246,18 @@ class QuickBooksConnector {
   }
   async postBill(input: PostingRequest) {
     if (!this.postingConfig) throw new Error("QuickBooks MCP posting is disabled");
-    return this.withPostingLock(PostingRequestSchema.parse(input));
+    const posting = this.postingQueue.then(() => this.post(input));
+    this.postingQueue = posting.then(
+      () => undefined,
+      () => undefined,
+    );
+    return posting;
   }
-  private async withPostingLock(input: PostingRequest) {
-    const root = this.postingConfig?.lockDirectory ?? resolve("data/qbo-posting-locks");
-    const conflictIdentity = input.invoice.invoiceNumber.trim().toLowerCase();
-    const lock = resolve(root, createHash("sha256").update(conflictIdentity).digest("hex"));
-    await mkdir(root, { recursive: true, mode: 0o700 });
-    const deadline = Date.now() + 15_000;
-    while (true) {
-      try {
-        await mkdir(lock, { mode: 0o700 });
-        break;
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-        if (Date.now() >= deadline)
-          throw new ProviderUnavailableError(
-            "quickbooks-mcp",
-            "posting idempotency lock is held; reconcile the invoice before retrying",
-          );
-        await new Promise((resolveWait) => setTimeout(resolveWait, 100));
-      }
-    }
-    try {
-      return await this.post(input);
-    } finally {
-      await rmdir(lock).catch(() => undefined);
-    }
-  }
-  private async post(input: PostingRequest) {
+  private async post(input: PostingRequest): Promise<PostingReceipt> {
     const config = this.postingConfig;
     if (!config) throw new Error("QuickBooks MCP posting is disabled");
     if (input.invoice.invoiceNumber.length > 21)
-      throw new PostingConflictError("QuickBooks bill DocNumber cannot exceed 21 characters");
+      throw new Error("QuickBooks bill DocNumber cannot exceed 21 characters");
     const marker = `AP workflow idempotency: ${input.idempotencyKey}`;
     const prior = await this.call("search_bills", {
       criteria: [{ field: "DocNumber", value: input.invoice.invoiceNumber, operator: "=" }],
@@ -315,29 +276,25 @@ class QuickBooksConnector {
             input.invoice.currency,
       );
       if (!exact?.Id)
-        throw new PostingConflictError(
+        throw new Error(
           `QuickBooks already has a conflicting bill numbered ${input.invoice.invoiceNumber}`,
         );
-      return PostingReceiptSchema.parse({
+      return {
         status: "already_posted",
         providerId: "quickbooks-mcp",
-        externalBillId: exact.Id,
+        externalBillId: required(exact.Id as string | undefined, "Bill.Id"),
         postedAt: new Date().toISOString(),
         idempotencyKey: input.idempotencyKey,
-      });
+      };
     }
     const tax = input.invoice.taxMinor ?? 0;
     if (tax && !config.taxAccountId)
-      throw new PostingConflictError(
-        "QBO_MCP_TAX_ACCOUNT_ID is required to post an invoice with tax",
-      );
+      throw new Error("QBO_MCP_TAX_ACCOUNT_ID is required to post an invoice with tax");
     if (
       input.invoice.subtotalMinor !== null &&
       input.invoice.subtotalMinor + tax !== input.invoice.totalMinor
     )
-      throw new PostingConflictError(
-        "Invoice subtotal and tax do not reconcile to the approved total",
-      );
+      throw new Error("Invoice subtotal and tax do not reconcile to the approved total");
     const amounts = input.invoice.lines.map(
       (line) =>
         line.lineTotalMinor ??
@@ -348,7 +305,7 @@ class QuickBooksConnector {
     );
     const expectedSubtotal = input.invoice.subtotalMinor ?? input.invoice.totalMinor - tax;
     if (amounts.reduce((sum, amount) => sum + amount, 0) !== expectedSubtotal)
-      throw new PostingConflictError("Invoice lines do not reconcile to the posting subtotal");
+      throw new Error("Invoice lines do not reconcile to the posting subtotal");
     const line = input.invoice.lines.map((item, index) => ({
       Amount: toMajorUnits(amounts[index]!, input.invoice.currency),
       DetailType: "AccountBasedExpenseLineDetail",
@@ -378,13 +335,13 @@ class QuickBooksConnector {
     const created = (await this.call(postingTool, { bill }))[0];
     if (!created?.Id)
       throw new ProviderUnavailableError("quickbooks-mcp", "create-bill returned no Bill.Id");
-    return PostingReceiptSchema.parse({
+    return {
       status: "posted",
       providerId: "quickbooks-mcp",
-      externalBillId: created.Id,
+      externalBillId: required(created.Id as string | undefined, "Bill.Id"),
       postedAt: new Date().toISOString(),
       idempotencyKey: input.idempotencyKey,
-    });
+    };
   }
 }
 
@@ -412,7 +369,6 @@ function resolveQuickBooksMcpConfiguration(): {
           expenseAccountId: expenseAccountId!,
           taxAccountId: process.env.QBO_MCP_TAX_ACCOUNT_ID?.trim(),
           apAccountId: process.env.QBO_MCP_AP_ACCOUNT_ID?.trim(),
-          lockDirectory: process.env.QBO_MCP_POSTING_LOCK_DIR?.trim(),
         }
       : undefined,
   };
@@ -424,9 +380,6 @@ export function makeQuickBooksProvider(client?: McpToolClient): AccountingProvid
   const connector = new QuickBooksConnector(resolvedClient, postingConfig);
   return {
     id: "quickbooks-mcp",
-    displayName: "QuickBooks Online MCP",
-    vendorData: "basic",
-    invoiceChannelAvailable: false,
     findVendors: connector.findVendors.bind(connector),
     findPurchaseOrders: connector.findPurchaseOrders.bind(connector),
     listBills: connector.listBills.bind(connector),

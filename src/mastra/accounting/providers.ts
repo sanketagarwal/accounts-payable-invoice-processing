@@ -42,14 +42,13 @@ export interface InvoiceRuntime {
   history: InvoiceHistory;
   policy: PolicyConfig;
   screenVendor: SanctionsScreener;
-  sanctionsSource: string;
   seedHistory(): Promise<void>;
 }
 
 function createInvoiceRuntime(provider = loadProvider()): InvoiceRuntime {
   const fixtureSanctions = process.env.SANCTIONS_SCREENING === "fixture";
   const screenVendor = provider.screenVendor ?? (fixtureSanctions ? screenFixtureVendor : null);
-  if (!screenVendor) throw new Error(`${provider.displayName} requires a sanctions screener`);
+  if (!screenVendor) throw new Error(`${provider.id} requires a sanctions screener`);
 
   const history = new InMemoryInvoiceHistory();
   let historySeed: Promise<void> | undefined;
@@ -59,7 +58,6 @@ function createInvoiceRuntime(provider = loadProvider()): InvoiceRuntime {
     history,
     policy: fixtureDb.policy,
     screenVendor,
-    sanctionsSource: provider.screenVendor ? provider.id : "fixture-sanctions",
     async seedHistory() {
       if (!provider.listBills) return Promise.resolve();
       try {
