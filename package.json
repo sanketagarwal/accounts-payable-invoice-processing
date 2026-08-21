@@ -12,25 +12,14 @@
     "dev": "mastra dev",
     "build": "mastra build",
     "start": "mastra start",
-    "format": "oxfmt . '!**/.github/**'",
-    "format:check": "oxfmt --check . '!**/.github/**'",
-    "typecheck": "tsc --noEmit",
-    "test": "INVOICE_READER=fixture ACCOUNTING_PROVIDER=fixture SANCTIONS_SCREENING= QBO_MCP_ENABLE_POSTING=false MASTRA_OBSERVABILITY_DB_PATH=:memory: tsx src/scripts/test.ts",
-    "fixtures:run": "INVOICE_READER=fixture tsx src/scripts/run-fixtures.ts",
-    "fixtures:score": "INVOICE_READER=fixture tsx src/scripts/score-fixtures.ts",
-    "invoice:run": "tsx src/scripts/run-invoice.ts",
-    "phase2:run": "INVOICE_READER=fixture ACCOUNTING_PROVIDER=fixture tsx src/scripts/run-phase2.ts",
-    "providers:conformance": "tsx src/scripts/provider-conformance.ts",
-    "kpis:report": "tsx src/scripts/kpi-report.ts",
-    "qbo-mcp:verify": "tsx src/scripts/verify-qbo-mcp.ts"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@mastra/core": "latest",
-    "@mastra/duckdb": "latest",
-    "@mastra/libsql": "latest",
-    "@mastra/mcp": "latest",
-    "@mastra/memory": "latest",
-    "@mastra/observability": "latest",
+    "@mastra/core": "1.60.0",
+    "@mastra/libsql": "1.21.0",
+    "@mastra/mcp": "1.17.0",
+    "@mastra/memory": "1.27.0",
+    "@mastra/observability": "1.17.1",
     "currency-codes": "2.2.0",
     "decimal.js": "10.6.0",
     "dotenv": "16.6.1",
@@ -38,9 +27,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
-    "mastra": "latest",
-    "oxfmt": "^0.59.0",
-    "tsx": "4.19.4",
+    "mastra": "1.25.1",
     "typescript": "^5.9.3"
   },
   "engines": {
