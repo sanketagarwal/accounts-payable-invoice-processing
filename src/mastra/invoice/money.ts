@@ -1,13 +1,41 @@
 import Decimal from "decimal.js";
+import { code as currencyCode } from "currency-codes";
 import {
   NormalizedInvoiceSchema,
   type InvoiceWorkflowInput,
   type NormalizedInvoice,
 } from "./schema.ts";
 
-const exponent = (currency: string) =>
-  new Intl.NumberFormat("en", { style: "currency", currency }).resolvedOptions()
-    .maximumFractionDigits ?? 2;
+const recentCurrencies = new Map([
+  ["XAD", 2],
+  ["XCG", 2],
+]);
+const currenciesWithoutMinorUnits = new Set([
+  "XAG",
+  "XAU",
+  "XBA",
+  "XBB",
+  "XBC",
+  "XBD",
+  "XDR",
+  "XPD",
+  "XPT",
+  "XSU",
+  "XTS",
+  "XUA",
+  "XXX",
+]);
+export const isCanonicalCurrency = (currency: string) =>
+  currencyCode(currency)?.code === currency || recentCurrencies.has(currency);
+export const minorUnitDigits = (currency: string) => {
+  if (currenciesWithoutMinorUnits.has(currency)) return null;
+  return recentCurrencies.get(currency) ?? currencyCode(currency)?.digits ?? null;
+};
+const exponent = (currency: string) => {
+  const digits = minorUnitDigits(currency);
+  if (digits === null) throw new Error(`${currency} has no supported ISO 4217 minor unit`);
+  return digits;
+};
 export function toMinorUnits(value: number, currency: string): number {
   const result = new Decimal(value.toString())
     .mul(new Decimal(10).pow(exponent(currency)))

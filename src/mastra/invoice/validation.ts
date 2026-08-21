@@ -1,29 +1,17 @@
 import Decimal from "decimal.js";
-import { code as currencyCode } from "currency-codes";
 import {
   ExtractedInvoiceSchema,
   type ExtractedInvoice,
   type InvoiceDraft,
   type NormalizedInvoice,
 } from "./schema.ts";
+import { isCanonicalCurrency, minorUnitDigits } from "./money.ts";
 
 const isDate = (value: string) =>
   /^\d{4}-\d{2}-\d{2}$/.test(value) &&
   !Number.isNaN(Date.parse(`${value}T00:00:00Z`)) &&
   new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value;
 const blank = (value: string) => value.trim().length === 0;
-const recentCurrencies = new Set(["XAD", "XCG"]);
-const currencyDigits = (currency: string) => {
-  if (currencyCode(currency)?.code !== currency && !recentCurrencies.has(currency)) return null;
-  try {
-    return (
-      new Intl.NumberFormat("en", { style: "currency", currency }).resolvedOptions()
-        .maximumFractionDigits ?? 2
-    );
-  } catch {
-    return null;
-  }
-};
 const hasMinorUnitPrecision = (value: number, digits: number) =>
   new Decimal(value).decimalPlaces() <= digits;
 // Unit prices may be sub-minor-unit rates; posted extended amounts must obey the currency scale.
@@ -62,7 +50,8 @@ export function validateExtraction(draft: InvoiceDraft): {
     if (blank(line.description)) issues.push(`lines.${index}.description is required`);
   });
 
-  const digits = currencyDigits(invoice.currency);
+  const canonicalCurrency = isCanonicalCurrency(invoice.currency);
+  const digits = minorUnitDigits(invoice.currency);
   const lineAmounts: Array<number | Decimal> = invoice.lines.map(
     (line) => line.lineTotal ?? new Decimal(line.qty).mul(line.unitPrice),
   );
@@ -72,7 +61,9 @@ export function validateExtraction(draft: InvoiceDraft): {
       ? lineAmounts.reduce<Decimal>((sum, value) => sum.plus(value), new Decimal(0))
       : null);
 
-  if (digits === null) issues.push("currency must be a canonical uppercase ISO 4217 code");
+  if (!canonicalCurrency) issues.push("currency must be a canonical uppercase ISO 4217 code");
+  else if (digits === null)
+    issues.push("currency must define ISO 4217 minor units to be supported for posting");
   else {
     for (const [field, value] of [
       ["subtotal", invoice.subtotal],
