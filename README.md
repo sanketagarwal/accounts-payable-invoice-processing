@@ -38,6 +38,7 @@ Approve invoice run <RUN_ID>. Comment: Reviewed in Studio.
 4. Record the decision evidence, posting result, and trace in Studio.
 
 Invoice extraction uses a multimodal model. Vendor matching, three-way matching, duplicate detection, approval thresholds, and posting eligibility are deterministic workflow steps.
+Studio conversations retain the last 20 messages within the same thread. Approvals still require an explicit run ID.
 
 ## Connecting accounting data
 

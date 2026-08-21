@@ -29,6 +29,7 @@
     "@mastra/duckdb": "latest",
     "@mastra/libsql": "latest",
     "@mastra/mcp": "latest",
+    "@mastra/memory": "latest",
     "@mastra/observability": "latest",
     "currency-codes": "2.2.0",
     "decimal.js": "10.6.0",
