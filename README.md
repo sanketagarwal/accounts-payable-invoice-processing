@@ -1,60 +1,47 @@
 # Accounts Payable Invoice Processing
 
-Turn an invoice into an accounts payable decision from one Mastra Studio prompt. Attach a PDF or image and the agent extracts the fields, validates the vendor, matches the purchase order and receipt, checks for duplicates, applies policy, and either posts the bill or asks for approval.
+Turn an invoice into a verified AP decision from one Mastra Studio message. The agent reads the document, checks it against accounting data, and either posts the bill or asks for approval.
 
-The template includes a sample invoice and local vendor, PO, receipt, and invoice-history fixtures, so the complete flow works without an ERP. QuickBooks is optional.
+## Why we built this
 
-## Prerequisites
+Real invoices are inconsistent, and production AP work spans several systems. We built this template to show an agent that coordinates multiple tools, handles that mess, and keeps vendor validation, matching, duplicate detection, approvals, and posting deterministic.
 
-- Node.js >= 22.13.0
-- An [OpenAI API key](https://platform.openai.com/api-keys)
+## Features
 
-## Setup
+- Processes PDF, PNG, and JPEG invoices in Studio
+- Validates vendors and performs two- or three-way PO matching
+- Detects duplicates and routes exceptions for review
+- Pauses high-value invoices for explicit approval
+- Keeps accounting access behind a provider interface and includes a QuickBooks connector
+
+## Quickstart
 
 ```bash
-git clone https://github.com/sanketagarwal/accounts-payable-invoice-processing.git
+npx create-mastra@latest --template accounts-payable-invoice-processing
 cd accounts-payable-invoice-processing
-npm install
 cp .env.example .env
-# add OPENAI_API_KEY to .env
+# Configure OpenAI, API auth, and an accounting provider in .env
 npm run dev
 ```
 
-Open the exact URL printed by Mastra (normally [127.0.0.1:4111](http://127.0.0.1:4111)), select **Accounts Payable Agent**, attach [`assets/sample-invoice.png`](./assets/sample-invoice.png), and say:
+Open [localhost:4111](http://localhost:4111), select **Accounts Payable Agent**, attach an invoice that matches data in your accounting sandbox, and say:
 
 > Process the attached invoice.
 
-The included invoice matches the fixture data and completes without QuickBooks. If a run requires approval, the agent returns a run ID. Reply once with:
+To approve a suspended invoice, reply with its run ID:
 
 ```text
 Approve invoice run <RUN_ID>. Comment: Reviewed in Studio.
 ```
 
-## How the agent works
+## Accounting providers
 
-1. Read the invoice and validate its printed totals.
-2. Check the vendor, PO, goods receipt, sanctions result, and prior invoices.
-3. Auto-post clean invoices or pause for explicit approval when policy requires it.
-4. Record the decision evidence, posting result, and trace in Studio.
+The workflow depends on the provider-neutral `AccountingProvider` interface. QuickBooks MCP is the included adapter, selected with `ACCOUNTING_PROVIDER=quickbooks-mcp`. To use NetSuite or another accounting system, implement that interface and add its factory to the provider loader; the invoice controls and workflow do not need to change.
 
-Invoice extraction uses a multimodal model. Vendor matching, three-way matching, duplicate detection, approval thresholds, and posting eligibility are deterministic workflow steps.
-Studio conversations retain the last 20 messages within the same thread. Approvals still require an explicit run ID.
+Production providers should also implement `screenVendor`. If screening is unavailable, the workflow fails closed by routing the invoice to review instead of posting it. A sandbox can explicitly set `AP_ALLOW_UNSCREENED_VENDORS=true`; this bypass is recorded in the vendor decision and should remain `false` in production.
 
-## Connecting accounting data
+For a QuickBooks sandbox demo, authenticate Intuit's [QuickBooks Online MCP server](https://github.com/intuit/quickbooks-online-mcp-server), then provide its built entry point, token store, and QuickBooks account IDs. Use a unique invoice number that matches an active sandbox vendor and PO. To test posting without a screening integration, acknowledge the sandbox-only bypass above. Posted bills appear under **Expenses & bills → Bills**.
 
-Optional QuickBooks connectors are included; see the [setup guide](./docs/advanced.md#quickbooks-sandbox) when you want one. You can also implement the `AccountingProvider` interface to connect your own accounting system.
+## Policy
 
-## Making it yours
-
-- Replace the fixture repositories in `src/mastra/phase2/providers` with your accounting and receiving systems.
-- Adjust the approval threshold and matching policy in `src/mastra/phase2/adapters/fixture.ts`.
-- Change `INVOICE_READER_MODEL` to another document-capable OpenAI model.
-- Connect the agent through the [Mastra Client SDK](https://mastra.ai/docs/server/mastra-client), or invoke the workflow when invoices arrive through an inbox or document store.
-
-Architecture, security, provider capabilities, testing commands, and deployment notes live in the [advanced guide](./docs/advanced.md).
-
-## About Mastra templates
-
-[Mastra templates](https://mastra.ai/templates) are ready-to-use projects that show off what you can build. They live in the [Mastra monorepo](https://github.com/mastra-ai/mastra) and are automatically synced to standalone repositories.
-
-Want to contribute? See [CONTRIBUTING.md](./CONTRIBUTING.md).
+Configure approval threshold, amount tolerance, and extraction-confidence threshold with the `AP_*` variables documented in `.env.example`. Monetary settings use integer minor units: `100000` represents USD 1,000 for a USD invoice.
