@@ -58,9 +58,6 @@ const DocumentRefSchema = z.object({
   source: z.enum(["PDF", "image"]).default("PDF"),
 });
 
-export const ReviewerContextSchema = z.object({ reviewerId: z.string().trim().min(1).optional() });
-export type ReviewerContext = z.infer<typeof ReviewerContextSchema>;
-
 const MoneySchema = z.number().int().safe();
 export const DecisionReasonSchema = z.object({
   code: z.string(),

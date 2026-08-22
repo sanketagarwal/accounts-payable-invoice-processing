@@ -20,7 +20,7 @@ Real invoices are inconsistent, and production AP work spans several systems. We
 npx create-mastra@latest --template accounts-payable-invoice-processing
 cd accounts-payable-invoice-processing
 cp .env.example .env
-# Configure OpenAI, API auth, and an accounting provider in .env
+# Configure OpenAI and an accounting provider in .env
 npm run dev
 ```
 
