@@ -10,7 +10,6 @@ import {
   NormalizedInvoiceSchema,
   InvoiceResultSchema,
   PostingRequestSchema,
-  ReviewerContextSchema,
   UnsignedInvoiceWorkflowInputSchema,
   type ApprovalEvidence,
   type FinalAssessment,
@@ -132,8 +131,7 @@ const approvalStep = createStep({
   outputSchema: InvoiceResultSchema,
   suspendSchema: ApprovalRequestSchema,
   resumeSchema: approvalDecisionSchema,
-  requestContextSchema: ReviewerContextSchema,
-  execute: async ({ inputData, resumeData, requestContext, suspend }) => {
+  execute: async ({ inputData, resumeData, suspend }) => {
     if (inputData.disposition === "auto_post") {
       return workflowResult(
         inputData,
@@ -161,12 +159,9 @@ const approvalStep = createStep({
       });
     }
 
-    const reviewerId = requestContext.get("reviewerId");
-    if (!reviewerId) throw new Error("An authenticated reviewer is required");
-
     const approval = approvalEvidence(inputData, {
       status: resumeData.approved ? "approved" : "rejected",
-      reviewerId,
+      reviewerId: "mastra-studio",
       decidedAt: new Date().toISOString(),
       comment: resumeData.comment ?? null,
     });
@@ -233,7 +228,6 @@ export const createInvoiceWorkflow = (runtime: InvoiceRuntime) =>
     id: "process-invoice",
     inputSchema: InvoiceWorkflowInputSchema,
     outputSchema: InvoiceResultSchema,
-    requestContextSchema: ReviewerContextSchema,
     options: { shouldPersistSnapshot: () => true },
   })
     .then(normalizeStep)

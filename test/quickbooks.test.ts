@@ -3,6 +3,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { afterEach, describe, it } from "node:test";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { Mastra } from "@mastra/core";
+import { LibSQLStore } from "@mastra/libsql";
 import {
   makeQuickBooksProvider,
   parseQuickBooksRecords,
@@ -10,6 +12,7 @@ import {
 } from "../src/mastra/accounting/quickbooks.ts";
 
 const originalEnvironment = {
+  AP_APPROVAL_THRESHOLD_MINOR: process.env.AP_APPROVAL_THRESHOLD_MINOR,
   AP_ALLOW_UNSCREENED_VENDORS: process.env.AP_ALLOW_UNSCREENED_VENDORS,
   QBO_MCP_ENABLE_POSTING: process.env.QBO_MCP_ENABLE_POSTING,
   QBO_MCP_EXPENSE_ACCOUNT_ID: process.env.QBO_MCP_EXPENSE_ACCOUNT_ID,
@@ -194,6 +197,7 @@ describe("QuickBooks provider", () => {
 
   it("runs the provider-neutral workflow with the configured QuickBooks adapter", async () => {
     const lockDirectory = await mkdtemp(join(tmpdir(), "qbo-workflow-test-"));
+    process.env.AP_APPROVAL_THRESHOLD_MINOR = "1";
     process.env.AP_ALLOW_UNSCREENED_VENDORS = "false";
     process.env.QBO_MCP_ENABLE_POSTING = "true";
     process.env.QBO_MCP_EXPENSE_ACCOUNT_ID = "expense-1";
@@ -275,16 +279,26 @@ describe("QuickBooks provider", () => {
         },
       };
       const workflow = createInvoiceWorkflow(runtime);
+      new Mastra({
+        workflows: { workflow },
+        storage: new LibSQLStore({ id: "qbo-workflow-test", url: `file:${join(lockDirectory, "mastra.db")}` }),
+      });
       const run = await workflow.createRun();
-      const result = await run.start({
+      const pending = await run.start({
         inputData: {
           ...unsignedInput,
           submissionSignature: signInvoiceSubmission(unsignedInput),
         },
       });
+      assert.equal(pending.status, "suspended");
+      const result = await run.resume({
+        step: "approve-invoice",
+        resumeData: { approved: true, comment: "Approved in Studio" },
+      });
 
       assert.equal(result.status, "success");
       assert.equal(result.result?.executionStatus, "posted");
+      assert.equal(result.result?.approval.reviewerId, "mastra-studio");
       assert.equal(result.result?.posting?.providerId, "quickbooks-mcp");
       assert.equal(result.result?.posting?.externalBillId, "workflow-bill");
       assert.deepEqual(calls, [

@@ -1,5 +1,4 @@
 import { Agent } from "@mastra/core/agent";
-import type { RequestContext } from "@mastra/core/request-context";
 import { createTool } from "@mastra/core/tools";
 import { Memory } from "@mastra/memory";
 import { z } from "zod";
@@ -13,7 +12,6 @@ import {
   DecisionReasonSchema,
   InvoiceDraftSchema,
   InvoiceResultSchema,
-  type ReviewerContext,
 } from "../invoice/schema.ts";
 import { validateExtraction } from "../invoice/validation.ts";
 
@@ -86,8 +84,7 @@ const submitInvoice = createTool({
     draft: InvoiceDraftSchema,
   }),
   outputSchema: toolResult,
-  execute: async ({ documentId, source, draft }, context) => {
-    const requestContext = context?.requestContext as RequestContext<ReviewerContext> | undefined;
+  execute: async ({ documentId, source, draft }) => {
     const checked = validateExtraction({ ...draft, source });
     if (!checked.extracted) {
       return buildExtractionReviewResult(checked.issues);
@@ -106,7 +103,7 @@ const submitInvoice = createTool({
       submissionSignature: signInvoiceSubmission(unsignedWorkflowInput),
     };
     const run = await invoiceWorkflow.createRun();
-    const result = await run.start({ inputData: workflowInput, requestContext });
+    const result = await run.start({ inputData: workflowInput });
     return summarize(result, run.runId);
   },
 });
@@ -121,13 +118,11 @@ const resumeApproval = createTool({
     comment: z.string().trim().max(1000).optional(),
   }),
   outputSchema: toolResult,
-  execute: async ({ runId, approved, comment }, context) => {
-    const requestContext = context?.requestContext as RequestContext<ReviewerContext> | undefined;
+  execute: async ({ runId, approved, comment }) => {
     const run = await invoiceWorkflow.createRun({ runId });
     const result = await run.resume({
       step: "approve-invoice",
       resumeData: { approved, comment },
-      requestContext,
     });
     return summarize(result, runId);
   },
