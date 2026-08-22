@@ -11,7 +11,8 @@ const compareLines = (state: AssessmentState, order: PurchaseOrder, tolerance: n
   state.invoice.lines.forEach((line, invoiceIndex) => {
     const orderIndex = line.sku
       ? order.lines.findIndex(
-          (candidate, index) => unusedOrderLines.has(index) && candidate.sku === line.sku,
+          (candidate, index) => unusedOrderLines.has(index) &&
+            [candidate.sku, candidate.description].some((id) => id === line.sku || id === line.description),
         )
       : unusedOrderLines.has(invoiceIndex)
         ? invoiceIndex
