@@ -194,7 +194,7 @@ describe("QuickBooks provider", () => {
 
   it("runs the provider-neutral workflow with the configured QuickBooks adapter", async () => {
     const lockDirectory = await mkdtemp(join(tmpdir(), "qbo-workflow-test-"));
-    process.env.AP_ALLOW_UNSCREENED_VENDORS = "true";
+    process.env.AP_ALLOW_UNSCREENED_VENDORS = "false";
     process.env.QBO_MCP_ENABLE_POSTING = "true";
     process.env.QBO_MCP_EXPENSE_ACCOUNT_ID = "expense-1";
     process.env.QBO_MCP_POSTING_LOCK_DIR = lockDirectory;
@@ -243,7 +243,15 @@ describe("QuickBooks provider", () => {
       const { createInvoiceWorkflow, signInvoiceSubmission } = await import(
         "../src/mastra/workflows/invoice.ts"
       );
-      const runtime = createInvoiceRuntime(makeQuickBooksProvider(client));
+      let screeningMatches = false;
+      const runtime = createInvoiceRuntime({
+        ...makeQuickBooksProvider(client),
+        async screenVendor() {
+          return screeningMatches
+            ? { matched: true, list: "screening-test", reference: "match-1" }
+            : { matched: false, list: null, reference: null };
+        },
+      });
       const unsignedInput = {
         rawDocumentRef: { id: "qbo-workflow", mimeType: "image/jpeg" as const, source: "image" as const },
         extractedResult: {
@@ -266,7 +274,8 @@ describe("QuickBooks provider", () => {
           source: "image" as const,
         },
       };
-      const run = await createInvoiceWorkflow(runtime).createRun();
+      const workflow = createInvoiceWorkflow(runtime);
+      const run = await workflow.createRun();
       const result = await run.start({
         inputData: {
           ...unsignedInput,
@@ -285,6 +294,23 @@ describe("QuickBooks provider", () => {
         "search_bills",
         "create-bill",
       ]);
+
+      screeningMatches = true;
+      const blockedRun = await workflow.createRun();
+      const blocked = await blockedRun.start({
+        inputData: {
+          ...unsignedInput,
+          submissionSignature: signInvoiceSubmission(unsignedInput),
+        },
+      });
+      assert.equal(blocked.status, "success");
+      assert.equal(blocked.result?.executionStatus, "not_postable");
+      assert.equal(blocked.result?.disposition, "blocked");
+      assert.deepEqual(
+        blocked.result?.decisions.flatMap(({ reasons }) => reasons.map(({ code }) => code)),
+        ["VENDOR_SCREENING_MATCH"],
+      );
+      assert.deepEqual(calls.slice(5), ["search_vendors"]);
     } finally {
       await rm(lockDirectory, { recursive: true, force: true });
     }
