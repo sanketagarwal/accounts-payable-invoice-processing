@@ -60,6 +60,9 @@ const runtime: InvoiceRuntime = {
     async findReceipts() {
       return [{ id: "receipt-1", purchaseOrderId: "po-1", lines: [{ sku: "PEN-01", qty: 10 }] }];
     },
+    async screenVendor() {
+      return { matched: false, list: null, reference: null };
+    },
   },
   history: {
     async findPotentialDuplicates() { return []; },
@@ -118,5 +121,12 @@ describe("provider-independent invoice controls", () => {
     const matched = await makeInvoiceMatch(policyRuntime)(state);
     const checked = await makeDuplicateDetection(policyRuntime)(matched);
     assert.equal((await makePolicyRouting(policyRuntime)(checked)).disposition, "approval_required");
+  });
+
+  it("fails closed when vendor screening is unavailable", async () => {
+    const { screenVendor: _, ...providerWithoutScreening } = runtime.provider;
+    const state = await makeVendorValidation({ ...runtime, provider: providerWithoutScreening })(normalized);
+    assert.equal(state.decisions[0]?.reasons[0]?.code, "VENDOR_SCREENING_UNAVAILABLE");
+    assert.equal(state.decisions[0]?.outcome, "review");
   });
 });

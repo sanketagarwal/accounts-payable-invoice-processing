@@ -92,6 +92,32 @@ export function makeVendorValidation(runtime: InvoiceRuntime) {
           ],
         });
 
+      if (!provider.screenVendor)
+        return decide(state, {
+          step: "vendor",
+          outcome: "review",
+          reasons: [
+            {
+              code: "VENDOR_SCREENING_UNAVAILABLE",
+              message: "Vendor screening is required before posting",
+            },
+          ],
+        });
+
+      const screening = await provider.screenVendor(vendor);
+      if (screening.matched)
+        return decide(state, {
+          step: "vendor",
+          outcome: "blocked",
+          reasons: [
+            {
+              code: "VENDOR_SCREENING_MATCH",
+              message: "Vendor matched a screening list",
+              evidence: screening,
+            },
+          ],
+        });
+
       if (mismatchReason) {
         const uncertain = invoice.confidence.some(
           ({ field, confidence }) =>

@@ -134,6 +134,11 @@ export const PriorInvoiceSchema = z.object({
   totalMinor: MoneySchema,
 });
 export type PriorInvoice = z.infer<typeof PriorInvoiceSchema>;
+export type VendorScreeningResult = {
+  matched: boolean;
+  list: string | null;
+  reference: string | null;
+};
 const PolicyConfigSchema = z.object({
   approvalThresholdMinor: MoneySchema,
   amountToleranceMinor: MoneySchema,

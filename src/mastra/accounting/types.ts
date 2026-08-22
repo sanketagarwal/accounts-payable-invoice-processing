@@ -4,6 +4,7 @@ import type {
   PostingRequest,
   PriorInvoice,
   PurchaseOrder,
+  VendorScreeningResult,
   VendorRecord,
 } from "../invoice/schema.ts";
 
@@ -15,6 +16,7 @@ export interface AccountingProvider {
   findPurchaseOrders(poNumber: string): Promise<PurchaseOrder[]>;
   findReceipts?(purchaseOrderId: string): Promise<GoodsReceipt[]>;
   listBills?(): Promise<PriorInvoice[]>;
+  screenVendor?(vendor: VendorRecord): Promise<VendorScreeningResult>;
   postBill?(input: PostingRequest): Promise<PostingReceipt>;
 }
 
