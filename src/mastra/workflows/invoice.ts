@@ -1,7 +1,7 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { createStep, createWorkflow } from "@mastra/core/workflows";
 import { z } from "zod";
-import { activeInvoiceRuntime } from "../accounting/providers.ts";
+import { activeInvoiceRuntime, type InvoiceRuntime } from "../accounting/providers.ts";
 import { normalizeInvoice } from "../invoice/money.ts";
 import {
   DecisionReasonSchema,
@@ -22,7 +22,6 @@ import { makeInvoiceMatch } from "../invoice/controls/matching.ts";
 import { makePolicyRouting } from "../invoice/controls/policy.ts";
 import { makeVendorValidation } from "../invoice/controls/vendor.ts";
 
-const runtime = activeInvoiceRuntime;
 const submissionSecret = randomBytes(32);
 
 const submissionPayload = (input: UnsignedInvoiceWorkflowInput) =>
@@ -49,22 +48,23 @@ const normalizeStep = createStep({
   },
 });
 
-const validateVendor = makeVendorValidation(runtime);
-const matchPurchaseOrder = makeInvoiceMatch(runtime);
-const detectDuplicates = makeDuplicateDetection(runtime);
-const applyPolicy = makePolicyRouting(runtime);
-
-const assessmentStep = createStep({
-  id: "assess-invoice",
-  inputSchema: NormalizedInvoiceSchema,
-  outputSchema: FinalAssessmentSchema,
-  execute: async ({ inputData }) => {
-    const vendorAssessment = await validateVendor(inputData);
-    const matchedAssessment = await matchPurchaseOrder(vendorAssessment);
-    const duplicateAssessment = await detectDuplicates(matchedAssessment);
-    return applyPolicy(duplicateAssessment);
-  },
-});
+const makeAssessmentStep = (runtime: InvoiceRuntime) => {
+  const validateVendor = makeVendorValidation(runtime);
+  const matchPurchaseOrder = makeInvoiceMatch(runtime);
+  const detectDuplicates = makeDuplicateDetection(runtime);
+  const applyPolicy = makePolicyRouting(runtime);
+  return createStep({
+    id: "assess-invoice",
+    inputSchema: NormalizedInvoiceSchema,
+    outputSchema: FinalAssessmentSchema,
+    execute: async ({ inputData }) => {
+      const vendorAssessment = await validateVendor(inputData);
+      const matchedAssessment = await matchPurchaseOrder(vendorAssessment);
+      const duplicateAssessment = await detectDuplicates(matchedAssessment);
+      return applyPolicy(duplicateAssessment);
+    },
+  });
+};
 
 const approvalDecisionSchema = z.object({
   approved: z.boolean(),
@@ -175,7 +175,7 @@ const approvalStep = createStep({
   },
 });
 
-const postingStep = createStep({
+const makePostingStep = (runtime: InvoiceRuntime) => createStep({
   id: "post-invoice",
   inputSchema: InvoiceResultSchema,
   outputSchema: InvoiceResultSchema,
@@ -228,15 +228,18 @@ const postingStep = createStep({
   },
 });
 
-export const invoiceWorkflow = createWorkflow({
-  id: "process-invoice",
-  inputSchema: InvoiceWorkflowInputSchema,
-  outputSchema: InvoiceResultSchema,
-  requestContextSchema: ReviewerContextSchema,
-  options: { shouldPersistSnapshot: () => true },
-})
-  .then(normalizeStep)
-  .then(assessmentStep)
-  .then(approvalStep)
-  .then(postingStep)
-  .commit();
+export const createInvoiceWorkflow = (runtime: InvoiceRuntime) =>
+  createWorkflow({
+    id: "process-invoice",
+    inputSchema: InvoiceWorkflowInputSchema,
+    outputSchema: InvoiceResultSchema,
+    requestContextSchema: ReviewerContextSchema,
+    options: { shouldPersistSnapshot: () => true },
+  })
+    .then(normalizeStep)
+    .then(makeAssessmentStep(runtime))
+    .then(approvalStep)
+    .then(makePostingStep(runtime))
+    .commit();
+
+export const invoiceWorkflow = createInvoiceWorkflow(activeInvoiceRuntime);

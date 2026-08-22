@@ -10,10 +10,13 @@ import {
 } from "../src/mastra/accounting/quickbooks.ts";
 
 const originalEnvironment = {
+  AP_ALLOW_UNSCREENED_VENDORS: process.env.AP_ALLOW_UNSCREENED_VENDORS,
   QBO_MCP_ENABLE_POSTING: process.env.QBO_MCP_ENABLE_POSTING,
   QBO_MCP_EXPENSE_ACCOUNT_ID: process.env.QBO_MCP_EXPENSE_ACCOUNT_ID,
   QBO_MCP_POSTING_LOCK_DIR: process.env.QBO_MCP_POSTING_LOCK_DIR,
+  QBO_MCP_SERVER_PATH: process.env.QBO_MCP_SERVER_PATH,
   QBO_MCP_SINGLE_WRITER: process.env.QBO_MCP_SINGLE_WRITER,
+  QBO_MCP_TOKEN_STORE_PATH: process.env.QBO_MCP_TOKEN_STORE_PATH,
 };
 
 afterEach(() => {
@@ -184,6 +187,104 @@ describe("QuickBooks provider", () => {
         (calls[1]?.input as { params: { bill: { TotalAmt: number } } }).params.bill.TotalAmt,
         100,
       );
+    } finally {
+      await rm(lockDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("runs the provider-neutral workflow with the configured QuickBooks adapter", async () => {
+    const lockDirectory = await mkdtemp(join(tmpdir(), "qbo-workflow-test-"));
+    process.env.AP_ALLOW_UNSCREENED_VENDORS = "true";
+    process.env.QBO_MCP_ENABLE_POSTING = "true";
+    process.env.QBO_MCP_EXPENSE_ACCOUNT_ID = "expense-1";
+    process.env.QBO_MCP_POSTING_LOCK_DIR = lockDirectory;
+    process.env.QBO_MCP_SERVER_PATH = process.execPath;
+    process.env.QBO_MCP_SINGLE_WRITER = "true";
+    process.env.QBO_MCP_TOKEN_STORE_PATH = process.execPath;
+    const calls: string[] = [];
+    const client: McpToolClient = {
+      async listToolNames() {
+        return new Set(["search_vendors", "search_purchase_orders", "search_bills", "create-bill"]);
+      },
+      async call(toolName) {
+        calls.push(toolName);
+        if (toolName === "search_vendors")
+          return response(
+            "Found 1 vendors:",
+            JSON.stringify({ Id: "vendor-1", DisplayName: "Acme Supplies", Active: true }),
+          );
+        if (toolName === "search_purchase_orders")
+          return response(
+            "Found 1 purchase order(s):",
+            JSON.stringify({
+              Id: "po-1",
+              DocNumber: "PO-1001",
+              VendorRef: { value: "vendor-1" },
+              CurrencyRef: { value: "USD" },
+              TotalAmt: 100,
+              Line: [{
+                Amount: 100,
+                ItemBasedExpenseLineDetail: {
+                  ItemRef: { value: "item-1", name: "PEN-01" },
+                  Qty: 10,
+                  UnitPrice: 10,
+                },
+              }],
+            }),
+          );
+        return toolName === "create-bill"
+          ? response(JSON.stringify({ Id: "workflow-bill" }))
+          : response("Count: 0");
+      },
+    };
+
+    try {
+      const { createInvoiceRuntime } = await import("../src/mastra/accounting/providers.ts");
+      const { createInvoiceWorkflow, signInvoiceSubmission } = await import(
+        "../src/mastra/workflows/invoice.ts"
+      );
+      const runtime = createInvoiceRuntime(makeQuickBooksProvider(client));
+      const unsignedInput = {
+        rawDocumentRef: { id: "qbo-workflow", mimeType: "image/jpeg" as const, source: "image" as const },
+        extractedResult: {
+          invoiceNumber: "INV-1001",
+          vendorName: "Acme Supplies",
+          vendorTaxId: null,
+          poNumber: "PO-1001",
+          invoiceDate: "2026-08-01",
+          currency: "USD",
+          subtotal: 100,
+          tax: 0,
+          total: 100,
+          lines: [{ sku: "PEN-01", description: "Pens", qty: 10, unitPrice: 10, lineTotal: 100 }],
+          confidence: [
+            "invoiceNumber", "vendorName", "poNumber", "invoiceDate", "currency", "subtotal",
+            "tax", "total", "lines[0].sku", "lines[0].description", "lines[0].qty",
+            "lines[0].unitPrice", "lines[0].lineTotal",
+          ].map((field) => ({ field, confidence: 0.99 })),
+          overallConfidence: 0.99,
+          source: "image" as const,
+        },
+      };
+      const run = await createInvoiceWorkflow(runtime).createRun();
+      const result = await run.start({
+        inputData: {
+          ...unsignedInput,
+          submissionSignature: signInvoiceSubmission(unsignedInput),
+        },
+      });
+
+      assert.equal(result.status, "success");
+      assert.equal(result.result?.executionStatus, "posted");
+      assert.equal(result.result?.posting?.providerId, "quickbooks-mcp");
+      assert.equal(result.result?.posting?.externalBillId, "workflow-bill");
+      assert.deepEqual(calls, [
+        "search_vendors",
+        "search_purchase_orders",
+        "search_bills",
+        "search_bills",
+        "create-bill",
+      ]);
     } finally {
       await rm(lockDirectory, { recursive: true, force: true });
     }
