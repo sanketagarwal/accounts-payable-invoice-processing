@@ -104,6 +104,7 @@ export const VendorRecordSchema = z.object({
 export type VendorRecord = z.infer<typeof VendorRecordSchema>;
 const PurchaseOrderLineSchema = z.object({
   sku: z.string().nullable(),
+  description: z.string().nullable().optional(),
   qty: z.number(),
   unitPriceMinor: MoneySchema,
   lineTotalMinor: MoneySchema,

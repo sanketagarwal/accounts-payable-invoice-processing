@@ -75,7 +75,7 @@ function createQuickBooksMcpToolClient(options: { enablePosting?: boolean } = {}
 
 type QuickBooksReference = { value?: string; name?: string };
 type QuickBooksLine = {
-  Amount?: number;
+  Amount?: number; Description?: string;
   ItemBasedExpenseLineDetail?: {
     ItemRef?: QuickBooksReference;
     Qty?: number;
@@ -131,13 +131,11 @@ const mapPurchaseOrder = (order: QuickBooksPurchaseOrder) => {
       .filter((line) => line.ItemBasedExpenseLineDetail)
       .map((line) => {
         const detail = line.ItemBasedExpenseLineDetail!;
-        const quantity = detail.Qty ?? 0;
-        const amount = line.Amount ?? 0;
+        const quantity = detail.Qty ?? 0, amount = line.Amount ?? 0;
 
         return {
-          // Match the human-readable item name printed on an invoice. QBO's
-          // internal ItemRef ID is still available to the connector when posting.
-          sku: detail.ItemRef?.name ?? detail.ItemRef?.value ?? null,
+          sku: detail.ItemRef?.value ?? detail.ItemRef?.name ?? null,
+          description: line.Description ?? detail.ItemRef?.name ?? null,
           qty: quantity,
           unitPriceMinor: toMinorUnits(
             detail.UnitPrice ?? (quantity ? amount / quantity : 0),
