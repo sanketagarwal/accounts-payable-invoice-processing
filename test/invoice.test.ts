@@ -146,4 +146,19 @@ describe("provider-independent invoice controls", () => {
     assert.equal(state.decisions[0]?.reasons[0]?.code, "VENDOR_SCREENING_BYPASSED");
     assert.equal(state.decisions[0]?.outcome, "pass");
   });
+
+  it("blocks a vendor that matches a screening list", async () => {
+    const screeningRuntime = {
+      ...runtime,
+      provider: {
+        ...runtime.provider,
+        async screenVendor() {
+          return { matched: true, list: "test-list", reference: "match-1" };
+        },
+      },
+    };
+    const state = await makeVendorValidation(screeningRuntime)(normalized);
+    assert.equal(state.decisions[0]?.reasons[0]?.code, "VENDOR_SCREENING_MATCH");
+    assert.equal(state.decisions[0]?.outcome, "blocked");
+  });
 });
