@@ -2,7 +2,6 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypt
 import { createStep, createWorkflow } from "@mastra/core/workflows";
 import { z } from "zod";
 import { activeInvoiceRuntime } from "../accounting/providers.ts";
-import { ReviewerContextSchema } from "../invoice/schema.ts";
 import { normalizeInvoice } from "../invoice/money.ts";
 import {
   DecisionReasonSchema,
@@ -11,6 +10,7 @@ import {
   NormalizedInvoiceSchema,
   InvoiceResultSchema,
   PostingRequestSchema,
+  ReviewerContextSchema,
   UnsignedInvoiceWorkflowInputSchema,
   type ApprovalEvidence,
   type FinalAssessment,
@@ -120,6 +120,12 @@ const workflowResult = (
   postingError: null,
 });
 
+const postingFailure = (
+  result: InvoiceResult,
+  executionStatus: "posting_unavailable" | "posting_failed",
+  postingError: string,
+): InvoiceResult => ({ ...result, executionStatus, postingError });
+
 const approvalStep = createStep({
   id: "approve-invoice",
   inputSchema: FinalAssessmentSchema,
@@ -177,21 +183,15 @@ const postingStep = createStep({
     if (inputData.executionStatus !== "ready_to_post") return inputData;
 
     const posting = runtime.provider.postBill;
-    if (!posting) {
-      return {
-        ...inputData,
-        executionStatus: "posting_unavailable" as const,
-        postingError: `${runtime.provider.id} is connected read-only`,
-      };
-    }
+    if (!posting)
+      return postingFailure(
+        inputData,
+        "posting_unavailable",
+        `${runtime.provider.id} is connected read-only`,
+      );
 
-    if (!inputData.vendor) {
-      return {
-        ...inputData,
-        executionStatus: "posting_failed" as const,
-        postingError: "Validated vendor is missing",
-      };
-    }
+    if (!inputData.vendor)
+      return postingFailure(inputData, "posting_failed", "Validated vendor is missing");
 
     try {
       const request = PostingRequestSchema.parse({
@@ -219,11 +219,11 @@ const postingStep = createStep({
         postingError: null,
       };
     } catch (error) {
-      return {
-        ...inputData,
-        executionStatus: "posting_failed" as const,
-        postingError: error instanceof Error ? error.message : "Unknown posting failure",
-      };
+      return postingFailure(
+        inputData,
+        "posting_failed",
+        error instanceof Error ? error.message : "Unknown posting failure",
+      );
     }
   },
 });

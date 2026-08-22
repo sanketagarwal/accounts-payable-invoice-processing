@@ -9,7 +9,9 @@
     "dev": "mastra dev",
     "build": "mastra build",
     "start": "mastra start",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test test/*.test.ts",
+    "check": "npm run typecheck && npm test"
   },
   "dependencies": {
     "@mastra/core": "1.60.0",

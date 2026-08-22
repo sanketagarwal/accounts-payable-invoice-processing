@@ -1,6 +1,5 @@
-import { fixtureDb, fixtureProvider, screenFixtureVendor } from "./fixture.ts";
 import { makeQuickBooksProvider } from "./quickbooks.ts";
-import type { AccountingProvider, InvoiceHistory, SanctionsScreener } from "./types.ts";
+import type { AccountingProvider, InvoiceHistory } from "./types.ts";
 import type { PolicyConfig, PriorInvoice } from "../invoice/schema.ts";
 
 class InMemoryInvoiceHistory implements InvoiceHistory {
@@ -30,36 +29,53 @@ class InMemoryInvoiceHistory implements InvoiceHistory {
   }
 }
 
+const configuredNumber = (name: string, fallback: number) => {
+  const raw = process.env[name]?.trim();
+  const value = raw ? Number(raw) : fallback;
+  if (!Number.isFinite(value) || value < 0) throw new Error(`${name} must be a non-negative number`);
+  return value;
+};
+
+const policy: PolicyConfig = {
+  approvalThresholdMinor: configuredNumber("AP_APPROVAL_THRESHOLD_MINOR", 100_000),
+  amountToleranceMinor: configuredNumber("AP_AMOUNT_TOLERANCE_MINOR", 1),
+  lowConfidenceThreshold: configuredNumber("AP_LOW_CONFIDENCE_THRESHOLD", 0.8),
+};
+if (!Number.isSafeInteger(policy.approvalThresholdMinor))
+  throw new Error("AP_APPROVAL_THRESHOLD_MINOR must be a safe integer");
+if (!Number.isSafeInteger(policy.amountToleranceMinor))
+  throw new Error("AP_AMOUNT_TOLERANCE_MINOR must be a safe integer");
+if (policy.lowConfidenceThreshold > 1)
+  throw new Error("AP_LOW_CONFIDENCE_THRESHOLD must be between 0 and 1");
+
+const providerFactories: Record<string, () => AccountingProvider> = {
+  "quickbooks-mcp": makeQuickBooksProvider,
+};
+
 const loadProvider = () => {
-  const id = process.env.ACCOUNTING_PROVIDER?.trim() || "fixture";
-  if (id === "fixture") return fixtureProvider;
-  if (id === "quickbooks-mcp") return makeQuickBooksProvider();
-  throw new Error(`Unknown accounting provider: ${id}`);
+  const providerId = process.env.ACCOUNTING_PROVIDER?.trim() || "quickbooks-mcp";
+  const factory = providerFactories[providerId];
+  if (factory) return factory();
+  throw new Error(`Unsupported accounting provider: ${providerId}`);
 };
 
 export interface InvoiceRuntime {
   provider: AccountingProvider;
   history: InvoiceHistory;
   policy: PolicyConfig;
-  screenVendor: SanctionsScreener;
   seedHistory(): Promise<void>;
 }
 
-function createInvoiceRuntime(provider = loadProvider()): InvoiceRuntime {
-  const fixtureSanctions = process.env.SANCTIONS_SCREENING === "fixture";
-  const screenVendor = provider.screenVendor ?? (fixtureSanctions ? screenFixtureVendor : null);
-  if (!screenVendor) throw new Error(`${provider.id} requires a sanctions screener`);
-
+export function createInvoiceRuntime(provider = loadProvider()): InvoiceRuntime {
   const history = new InMemoryInvoiceHistory();
   let historySeed: Promise<void> | undefined;
 
   return {
     provider,
     history,
-    policy: fixtureDb.policy,
-    screenVendor,
+    policy,
     async seedHistory() {
-      if (!provider.listBills) return Promise.resolve();
+      if (!provider.listBills) return;
       try {
         return await (historySeed ??= provider
           .listBills()

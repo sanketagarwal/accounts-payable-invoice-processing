@@ -164,13 +164,14 @@ const mapBill = (bill: QuickBooksBill) => {
 
 const requiredTools = ["search_vendors", "search_purchase_orders", "search_bills"] as const;
 const postingTool = "create-bill" as const;
-const ToolResultSchema = z
-  .object({
-    isError: z.boolean().optional(),
-    content: z.array(z.object({ type: z.string(), text: z.string().optional() }).passthrough()),
-  })
-  .passthrough();
-const records = (result: unknown) => {
+const ToolResultSchema = z.object({
+  isError: z.boolean().optional(),
+  content: z.array(z.object({ type: z.string(), text: z.string().optional() })),
+});
+const isResultSummary = (text: string) =>
+  /^Found \d+ .+:$/i.test(text.trim()) || /^Count:\s*\d+$/i.test(text.trim());
+
+export const parseQuickBooksRecords = (result: unknown) => {
   const parsed = ToolResultSchema.parse(result),
     texts = parsed.content.flatMap((item) =>
       item.type === "text" && item.text ? [item.text] : [],
@@ -182,7 +183,8 @@ const records = (result: unknown) => {
         const value: unknown = JSON.parse(text);
         return Array.isArray(value) ? value : [value];
       } catch {
-        if (/^Found \d+ records?:$/i.test(text.trim())) return [];
+        // Intuit search tools prefix JSON with a human-readable, tool-specific count.
+        if (isResultSummary(text)) return [];
         throw new Error(`MCP tool returned non-JSON output: ${text}`);
       }
     })
@@ -199,47 +201,43 @@ interface QuickBooksMcpPostingConfig {
   lockDirectory?: string;
 }
 
-class QuickBooksConnector {
-  private verified?: Promise<void>;
-  constructor(
-    private readonly client: McpToolClient,
-    private readonly postingConfig?: QuickBooksMcpPostingConfig,
-  ) {}
-  private async verifyTools() {
-    const available = await this.client.listToolNames();
-    const expected = [...requiredTools, ...(this.postingConfig ? [postingTool] : [])];
+const createQuickBooksConnector = (client: McpToolClient, postingConfig?: QuickBooksMcpPostingConfig) => {
+  let verified: Promise<void> | undefined;
+  const verifyTools = async () => {
+    const available = await client.listToolNames();
+    const expected = [...requiredTools, ...(postingConfig ? [postingTool] : [])];
     const missing = expected.filter((tool) => !available.has(tool));
     if (missing.length)
       throw new Error(`QuickBooks MCP is missing required tools: ${missing.join(", ")}`);
-  }
+  };
 
-  private async ensureTools() {
+  const ensureTools = async () => {
     try {
-      await (this.verified ??= this.verifyTools());
+      await (verified ??= verifyTools());
     } catch (error) {
-      this.verified = undefined;
+      verified = undefined;
       throw error;
     }
-  }
+  };
 
-  private async call(tool: (typeof requiredTools)[number] | typeof postingTool, params: unknown) {
+  const call = async (tool: (typeof requiredTools)[number] | typeof postingTool, params: unknown) => {
     try {
-      await this.ensureTools();
-      return records(await this.client.call(tool, { params }));
+      await ensureTools();
+      return parseQuickBooksRecords(await client.call(tool, { params }));
     } catch (error) {
       if (error instanceof ProviderUnavailableError) throw error;
       throw new ProviderUnavailableError("quickbooks-mcp", tool, { cause: error });
     }
-  }
-  async findVendors(input: VendorLookup) {
-    const rows = await this.call("search_vendors", {
+  };
+  const findVendors = async (input: VendorLookup) => {
+    const rows = await call("search_vendors", {
       criteria: [{ field: "DisplayName", value: input.name, operator: "=" }],
       fetchAll: true,
     });
     return rows.map((row) => mapVendor(row as QuickBooksVendor));
-  }
-  async findPurchaseOrders(poNumber: string) {
-    const rows = await this.call("search_purchase_orders", { limit: 1000 }),
+  };
+  const findPurchaseOrders = async (poNumber: string) => {
+    const rows = await call("search_purchase_orders", { limit: 1000 }),
       matches = rows.filter((row) => row.DocNumber === poNumber);
     if (!matches.length && rows.length === 1000)
       throw new ProviderUnavailableError(
@@ -247,49 +245,17 @@ class QuickBooksConnector {
         "search_purchase_orders result window exhausted",
       );
     return matches.map((row) => mapPurchaseOrder(row as QuickBooksPurchaseOrder));
-  }
-  async listBills() {
-    return (await this.call("search_bills", { fetchAll: true })).map((row) =>
+  };
+  const listBills = async () =>
+    (await call("search_bills", { fetchAll: true })).map((row) =>
       mapBill(row as QuickBooksBill),
     );
-  }
-  async postBill(input: PostingRequest) {
-    if (!this.postingConfig) throw new Error("QuickBooks MCP posting is disabled");
-    return this.withPostingLock(PostingRequestSchema.parse(input));
-  }
-  private async withPostingLock(input: PostingRequest) {
-    const root = this.postingConfig?.lockDirectory ?? resolve("data/qbo-posting-locks");
-    const invoiceKey = input.invoice.invoiceNumber.trim().toLowerCase();
-    const lock = resolve(root, createHash("sha256").update(invoiceKey).digest("hex"));
-    await mkdir(root, { recursive: true, mode: 0o700 });
-    const deadline = Date.now() + 15_000;
-    while (true) {
-      try {
-        await mkdir(lock, { mode: 0o700 });
-        break;
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-        if (Date.now() >= deadline)
-          throw new ProviderUnavailableError(
-            "quickbooks-mcp",
-            "posting idempotency lock is held; reconcile the invoice before retrying",
-          );
-        await new Promise((resolveWait) => setTimeout(resolveWait, 100));
-      }
-    }
-    try {
-      return await this.post(input);
-    } finally {
-      await rmdir(lock).catch(() => undefined);
-    }
-  }
-  private async post(input: PostingRequest): Promise<PostingReceipt> {
-    const config = this.postingConfig;
-    if (!config) throw new Error("QuickBooks MCP posting is disabled");
+
+  const post = async (input: PostingRequest, config: QuickBooksMcpPostingConfig): Promise<PostingReceipt> => {
     if (input.invoice.invoiceNumber.length > 21)
       throw new Error("QuickBooks bill DocNumber cannot exceed 21 characters");
     const marker = `AP workflow idempotency: ${input.idempotencyKey}`;
-    const prior = await this.call("search_bills", {
+    const prior = await call("search_bills", {
       criteria: [{ field: "DocNumber", value: input.invoice.invoiceNumber, operator: "=" }],
       fetchAll: true,
     });
@@ -362,7 +328,7 @@ class QuickBooksConnector {
         LinkedTxn: [{ TxnId: input.purchaseOrder.id, TxnType: "PurchaseOrder" }],
       }),
     };
-    const created = (await this.call(postingTool, { bill }))[0];
+    const created = (await call(postingTool, { bill }))[0];
     if (!created?.Id)
       throw new ProviderUnavailableError("quickbooks-mcp", "create-bill returned no Bill.Id");
     return {
@@ -372,48 +338,75 @@ class QuickBooksConnector {
       postedAt: new Date().toISOString(),
       idempotencyKey: input.idempotencyKey,
     };
-  }
-}
+  };
 
-function resolveQuickBooksMcpConfiguration(): {
-  postingEnabled: boolean;
-  postingConfig?: QuickBooksMcpPostingConfig;
-} {
+  const withPostingLock = async (input: PostingRequest, config: QuickBooksMcpPostingConfig) => {
+    const root = config.lockDirectory ?? resolve("data/qbo-posting-locks");
+    const invoiceKey = input.invoice.invoiceNumber.trim().toLowerCase();
+    const lock = resolve(root, createHash("sha256").update(invoiceKey).digest("hex"));
+    await mkdir(root, { recursive: true, mode: 0o700 });
+    const deadline = Date.now() + 15_000;
+    while (true) {
+      try {
+        await mkdir(lock, { mode: 0o700 });
+        break;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+        if (Date.now() >= deadline)
+          throw new ProviderUnavailableError(
+            "quickbooks-mcp",
+            "posting idempotency lock is held; reconcile the invoice before retrying",
+          );
+        await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+      }
+    }
+    try {
+      return await post(input, config);
+    } finally {
+      await rmdir(lock).catch(() => undefined);
+    }
+  };
+
+  const postBill = (input: PostingRequest) => {
+    if (!postingConfig) throw new Error("QuickBooks MCP posting is disabled");
+    return withPostingLock(PostingRequestSchema.parse(input), postingConfig);
+  };
+  return { findVendors, findPurchaseOrders, listBills, postBill };
+};
+
+function resolveQuickBooksMcpConfiguration(): QuickBooksMcpPostingConfig | undefined {
   const postingValue = process.env.QBO_MCP_ENABLE_POSTING?.trim().toLowerCase();
   if (postingValue && !["true", "false"].includes(postingValue))
     throw new Error("QBO_MCP_ENABLE_POSTING must be true or false");
-  const postingEnabled = postingValue === "true",
-    expenseAccountId = process.env.QBO_MCP_EXPENSE_ACCOUNT_ID?.trim();
-  if (postingEnabled && !expenseAccountId)
+  if (postingValue !== "true") return;
+
+  const expenseAccountId = process.env.QBO_MCP_EXPENSE_ACCOUNT_ID?.trim();
+  if (!expenseAccountId)
     throw new Error(
       "QBO_MCP_EXPENSE_ACCOUNT_ID is required when QuickBooks MCP posting is enabled",
     );
-  if (postingEnabled && process.env.QBO_MCP_SINGLE_WRITER?.trim().toLowerCase() !== "true")
+  if (process.env.QBO_MCP_SINGLE_WRITER?.trim().toLowerCase() !== "true")
     throw new Error(
       "QBO_MCP_SINGLE_WRITER=true is required when QuickBooks MCP posting is enabled",
     );
   return {
-    postingEnabled,
-    postingConfig: postingEnabled
-      ? {
-          expenseAccountId: expenseAccountId!,
-          taxAccountId: process.env.QBO_MCP_TAX_ACCOUNT_ID?.trim(),
-          apAccountId: process.env.QBO_MCP_AP_ACCOUNT_ID?.trim(),
-          lockDirectory: process.env.QBO_MCP_POSTING_LOCK_DIR?.trim() || undefined,
-        }
-      : undefined,
+    expenseAccountId,
+    taxAccountId: process.env.QBO_MCP_TAX_ACCOUNT_ID?.trim(),
+    apAccountId: process.env.QBO_MCP_AP_ACCOUNT_ID?.trim(),
+    lockDirectory: process.env.QBO_MCP_POSTING_LOCK_DIR?.trim() || undefined,
   };
 }
 
 export function makeQuickBooksProvider(client?: McpToolClient): AccountingProvider {
-  const { postingEnabled, postingConfig } = resolveQuickBooksMcpConfiguration();
+  const postingConfig = resolveQuickBooksMcpConfiguration();
+  const postingEnabled = Boolean(postingConfig);
   const resolvedClient = client ?? createQuickBooksMcpToolClient({ enablePosting: postingEnabled });
-  const connector = new QuickBooksConnector(resolvedClient, postingConfig);
+  const connector = createQuickBooksConnector(resolvedClient, postingConfig);
   return {
     id: "quickbooks-mcp",
-    findVendors: connector.findVendors.bind(connector),
-    findPurchaseOrders: connector.findPurchaseOrders.bind(connector),
-    listBills: connector.listBills.bind(connector),
-    ...(postingEnabled && { postBill: connector.postBill.bind(connector) }),
+    findVendors: connector.findVendors,
+    findPurchaseOrders: connector.findPurchaseOrders,
+    listBills: connector.listBills,
+    ...(postingEnabled && { postBill: connector.postBill }),
   };
 }

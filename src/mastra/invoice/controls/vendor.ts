@@ -92,21 +92,6 @@ export function makeVendorValidation(runtime: InvoiceRuntime) {
           ],
         });
 
-      const sanctions = await runtime.screenVendor(vendor);
-      if (sanctions.matched)
-        return decide(state, {
-          step: "vendor",
-          outcome: "blocked",
-          reasons: [
-            {
-              code: "SANCTIONS_MATCH",
-              message: "Vendor matched a sanctions list",
-              evidence: sanctions,
-            },
-            ...(mismatchReason ? [mismatchReason] : []),
-          ],
-        });
-
       if (mismatchReason) {
         const uncertain = invoice.confidence.some(
           ({ field, confidence }) =>

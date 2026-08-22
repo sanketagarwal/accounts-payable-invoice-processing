@@ -105,9 +105,8 @@ const canonicalConfidenceField = (field: string) => {
 const entries = (invoice: NormalizedInvoice) =>
   invoice.confidence.map((item) => ({ ...item, field: canonicalConfidenceField(item.field) }));
 
-const confidenceFor = (invoice: NormalizedInvoice, field: string) => {
+const confidenceFor = (values: NormalizedInvoice["confidence"], field: string) => {
   const canonical = canonicalConfidenceField(field);
-  const values = entries(invoice);
   const candidates = values.filter(
     (item) =>
       item.field === canonical || (canonical.startsWith("lines.") && item.field === "lines"),
@@ -134,10 +133,10 @@ const requiredConfidenceFields = (invoice: NormalizedInvoice) => [
 ];
 
 export const confidenceProblems = (invoice: NormalizedInvoice, threshold: number) => {
-  const required = requiredConfidenceFields(invoice);
-  const missingConfidence = required.filter((field) => confidenceFor(invoice, field) === undefined);
+  const required = requiredConfidenceFields(invoice), values = entries(invoice);
+  const missingConfidence = required.filter((field) => confidenceFor(values, field) === undefined);
   const uncertainFields = required.filter((field) => {
-    const confidence = confidenceFor(invoice, field);
+    const confidence = confidenceFor(values, field);
     return confidence !== undefined && confidence < threshold;
   });
   return { uncertainFields, missingConfidence };
@@ -159,7 +158,7 @@ export const hasLowConfidence = (
       );
     if (lineLeaf.test(field))
       return values.some((item) => item.field.endsWith(`.${field}`) && item.confidence < threshold);
-    const confidence = confidenceFor(invoice, canonical);
+    const confidence = confidenceFor(values, canonical);
     return confidence !== undefined && confidence < threshold;
   });
 };

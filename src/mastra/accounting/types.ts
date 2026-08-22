@@ -4,7 +4,6 @@ import type {
   PostingRequest,
   PriorInvoice,
   PurchaseOrder,
-  SanctionsResult,
   VendorRecord,
 } from "../invoice/schema.ts";
 
@@ -16,7 +15,6 @@ export interface AccountingProvider {
   findPurchaseOrders(poNumber: string): Promise<PurchaseOrder[]>;
   findReceipts?(purchaseOrderId: string): Promise<GoodsReceipt[]>;
   listBills?(): Promise<PriorInvoice[]>;
-  screenVendor?(vendor: VendorRecord): Promise<SanctionsResult>;
   postBill?(input: PostingRequest): Promise<PostingReceipt>;
 }
 
@@ -30,8 +28,6 @@ export interface InvoiceHistory {
   seed(invoices: PriorInvoice[]): Promise<void>;
   save(invoice: PriorInvoice): Promise<void>;
 }
-
-export type SanctionsScreener = (vendor: VendorRecord) => Promise<SanctionsResult>;
 
 export class ProviderUnavailableError extends Error {
   constructor(providerId: string, operation: string, options?: { cause?: unknown }) {

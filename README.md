@@ -12,7 +12,7 @@ Real invoices are inconsistent, and production AP work spans several systems. We
 - Validates vendors and performs two- or three-way PO matching
 - Detects duplicates and routes exceptions for review
 - Pauses high-value invoices for explicit approval
-- Includes local demo data, conversation memory, and an optional QuickBooks connector
+- Keeps accounting access behind a provider interface and includes a QuickBooks connector
 
 ## Quickstart
 
@@ -20,26 +20,26 @@ Real invoices are inconsistent, and production AP work spans several systems. We
 npx create-mastra@latest --template accounts-payable-invoice-processing
 cd accounts-payable-invoice-processing
 cp .env.example .env
-# Add OPENAI_API_KEY to .env
+# Configure OpenAI, API auth, and an accounting provider in .env
 npm run dev
 ```
 
-Open [localhost:4111](http://localhost:4111), select **Accounts Payable Agent**, attach `assets/sample-invoice.png`, and say:
+Open [localhost:4111](http://localhost:4111), select **Accounts Payable Agent**, attach an invoice that matches data in your accounting sandbox, and say:
 
 > Process the attached invoice.
 
-The sample invoice matches the included vendor, PO, receipt, and history fixtures, so it runs without an ERP. To approve a suspended invoice, reply with its run ID:
+To approve a suspended invoice, reply with its run ID:
 
 ```text
 Approve invoice run <RUN_ID>. Comment: Reviewed in Studio.
 ```
 
-## Connect your accounting data
+## Accounting providers
 
-QuickBooks support is included but optional. For a sandbox, set `ACCOUNTING_PROVIDER=quickbooks-mcp`, `SANCTIONS_SCREENING=fixture`, and the `QBO_MCP_*` variables in `.env`. In production, replace the fixture sanctions check with your own screener. You can also implement `AccountingProvider` for another system.
+The workflow depends on the provider-neutral `AccountingProvider` interface. QuickBooks MCP is the included adapter, selected with `ACCOUNTING_PROVIDER=quickbooks-mcp`. To use NetSuite or another accounting system, implement that interface and add its factory to the provider loader; the invoice controls and workflow do not need to change.
 
 For a QuickBooks sandbox demo, authenticate Intuit's [QuickBooks Online MCP server](https://github.com/intuit/quickbooks-online-mcp-server), then provide its built entry point, token store, and QuickBooks account IDs. Use a unique invoice number that matches an active sandbox vendor and PO. Posted bills appear under **Expenses & bills → Bills**.
 
-## Make it yours
+## Policy
 
-Adjust the fixtures and approval threshold in `src/mastra/accounting/fixture.ts`, or replace the provider in `src/mastra/accounting/providers.ts`.
+Configure approval threshold, amount tolerance, and extraction-confidence threshold with the `AP_*` variables documented in `.env.example`. Monetary settings use integer minor units: `100000` represents USD 1,000 for a USD invoice.

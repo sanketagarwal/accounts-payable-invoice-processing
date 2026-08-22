@@ -9,7 +9,6 @@ import {
   apAuth,
   authConfigurationError,
   getCurrentApUser,
-  isLocalFixtureDemo,
   serverHost,
   setAuthenticatedReviewer,
 } from "./auth.ts";
@@ -42,12 +41,12 @@ export const mastra = new Mastra({
         path: "/api/*",
         handler: async (context, next) => {
           const user = await getCurrentApUser(context.req.raw);
-          if (!user && !isLocalFixtureDemo())
+          if (!user)
             return context.json(
               {
                 error:
                   authConfigurationError ||
-                  "Configure MASTRA_AUTH_TOKEN and MASTRA_AUTH_USER_ID to use the API outside the local fixture demo",
+                  "Configure MASTRA_AUTH_TOKEN and MASTRA_AUTH_USER_ID to use the API",
               },
               401,
             );

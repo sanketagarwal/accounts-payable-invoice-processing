@@ -95,7 +95,7 @@ export function makeInvoiceMatch(runtime: InvoiceRuntime) {
         });
       }
 
-      if (!provider.findReceipts) {
+      if (!provider.findReceipts)
         return decide(state, {
           step: "match",
           outcome: "pass",
@@ -106,7 +106,6 @@ export function makeInvoiceMatch(runtime: InvoiceRuntime) {
             },
           ],
         });
-      }
 
       const receipts = await provider.findReceipts(order.id);
       const invoiceLinesWithoutSku = state.invoice.lines.filter(({ sku }) => !sku).length;
