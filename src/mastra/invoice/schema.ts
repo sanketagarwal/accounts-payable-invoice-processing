@@ -143,6 +143,7 @@ const PolicyConfigSchema = z.object({
   approvalThresholdMinor: MoneySchema,
   amountToleranceMinor: MoneySchema,
   lowConfidenceThreshold: z.number().min(0).max(1),
+  allowUnscreenedVendors: z.boolean(),
 });
 export type PolicyConfig = z.infer<typeof PolicyConfigSchema>;
 

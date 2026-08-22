@@ -69,7 +69,12 @@ const runtime: InvoiceRuntime = {
     async seed() {},
     async save() {},
   },
-  policy: { approvalThresholdMinor: 100_000, amountToleranceMinor: 1, lowConfidenceThreshold: 0.8 },
+  policy: {
+    approvalThresholdMinor: 100_000,
+    amountToleranceMinor: 1,
+    lowConfidenceThreshold: 0.8,
+    allowUnscreenedVendors: false,
+  },
   async seedHistory() {},
 };
 
@@ -128,5 +133,17 @@ describe("provider-independent invoice controls", () => {
     const state = await makeVendorValidation({ ...runtime, provider: providerWithoutScreening })(normalized);
     assert.equal(state.decisions[0]?.reasons[0]?.code, "VENDOR_SCREENING_UNAVAILABLE");
     assert.equal(state.decisions[0]?.outcome, "review");
+  });
+
+  it("allows an explicit sandbox-only screening bypass", async () => {
+    const { screenVendor: _, ...providerWithoutScreening } = runtime.provider;
+    const bypassRuntime = {
+      ...runtime,
+      provider: providerWithoutScreening,
+      policy: { ...runtime.policy, allowUnscreenedVendors: true },
+    };
+    const state = await makeVendorValidation(bypassRuntime)(normalized);
+    assert.equal(state.decisions[0]?.reasons[0]?.code, "VENDOR_SCREENING_BYPASSED");
+    assert.equal(state.decisions[0]?.outcome, "pass");
   });
 });

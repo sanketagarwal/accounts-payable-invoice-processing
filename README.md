@@ -38,9 +38,9 @@ Approve invoice run <RUN_ID>. Comment: Reviewed in Studio.
 
 The workflow depends on the provider-neutral `AccountingProvider` interface. QuickBooks MCP is the included adapter, selected with `ACCOUNTING_PROVIDER=quickbooks-mcp`. To use NetSuite or another accounting system, implement that interface and add its factory to the provider loader; the invoice controls and workflow do not need to change.
 
-Production providers should also implement `screenVendor`. If screening is unavailable, the workflow fails closed by routing the invoice to review instead of posting it.
+Production providers should also implement `screenVendor`. If screening is unavailable, the workflow fails closed by routing the invoice to review instead of posting it. A sandbox can explicitly set `AP_ALLOW_UNSCREENED_VENDORS=true`; this bypass is recorded in the vendor decision and should remain `false` in production.
 
-For a QuickBooks sandbox demo, authenticate Intuit's [QuickBooks Online MCP server](https://github.com/intuit/quickbooks-online-mcp-server), then provide its built entry point, token store, and QuickBooks account IDs. Use a unique invoice number that matches an active sandbox vendor and PO. Posted bills appear under **Expenses & bills → Bills**.
+For a QuickBooks sandbox demo, authenticate Intuit's [QuickBooks Online MCP server](https://github.com/intuit/quickbooks-online-mcp-server), then provide its built entry point, token store, and QuickBooks account IDs. Use a unique invoice number that matches an active sandbox vendor and PO. To test posting without a screening integration, acknowledge the sandbox-only bypass above. Posted bills appear under **Expenses & bills → Bills**.
 
 ## Policy
 

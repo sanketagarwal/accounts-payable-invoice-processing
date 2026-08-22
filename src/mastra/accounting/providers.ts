@@ -35,11 +35,18 @@ const configuredNumber = (name: string, fallback: number) => {
   if (!Number.isFinite(value) || value < 0) throw new Error(`${name} must be a non-negative number`);
   return value;
 };
+const configuredBoolean = (name: string, fallback: boolean) => {
+  const raw = process.env[name]?.trim().toLowerCase();
+  if (!raw) return fallback;
+  if (!["true", "false"].includes(raw)) throw new Error(`${name} must be true or false`);
+  return raw === "true";
+};
 
 const policy: PolicyConfig = {
   approvalThresholdMinor: configuredNumber("AP_APPROVAL_THRESHOLD_MINOR", 100_000),
   amountToleranceMinor: configuredNumber("AP_AMOUNT_TOLERANCE_MINOR", 1),
   lowConfidenceThreshold: configuredNumber("AP_LOW_CONFIDENCE_THRESHOLD", 0.8),
+  allowUnscreenedVendors: configuredBoolean("AP_ALLOW_UNSCREENED_VENDORS", false),
 };
 if (!Number.isSafeInteger(policy.approvalThresholdMinor))
   throw new Error("AP_APPROVAL_THRESHOLD_MINOR must be a safe integer");

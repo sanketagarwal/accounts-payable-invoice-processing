@@ -92,31 +92,35 @@ export function makeVendorValidation(runtime: InvoiceRuntime) {
           ],
         });
 
-      if (!provider.screenVendor)
-        return decide(state, {
-          step: "vendor",
-          outcome: "review",
-          reasons: [
-            {
-              code: "VENDOR_SCREENING_UNAVAILABLE",
-              message: "Vendor screening is required before posting",
-            },
-          ],
-        });
-
-      const screening = await provider.screenVendor(vendor);
-      if (screening.matched)
-        return decide(state, {
-          step: "vendor",
-          outcome: "blocked",
-          reasons: [
-            {
-              code: "VENDOR_SCREENING_MATCH",
-              message: "Vendor matched a screening list",
-              evidence: screening,
-            },
-          ],
-        });
+      const screenVendor = provider.screenVendor;
+      const screeningBypassed = !screenVendor;
+      if (screeningBypassed) {
+        if (!runtime.policy.allowUnscreenedVendors)
+          return decide(state, {
+            step: "vendor",
+            outcome: "review",
+            reasons: [
+              {
+                code: "VENDOR_SCREENING_UNAVAILABLE",
+                message: "Vendor screening is required before posting",
+              },
+            ],
+          });
+      } else {
+        const screening = await screenVendor(vendor);
+        if (screening.matched)
+          return decide(state, {
+            step: "vendor",
+            outcome: "blocked",
+            reasons: [
+              {
+                code: "VENDOR_SCREENING_MATCH",
+                message: "Vendor matched a screening list",
+                evidence: screening,
+              },
+            ],
+          });
+      }
 
       if (mismatchReason) {
         const uncertain = invoice.confidence.some(
@@ -135,8 +139,10 @@ export function makeVendorValidation(runtime: InvoiceRuntime) {
         outcome: "pass",
         reasons: [
           {
-            code: "VENDOR_VALID",
-            message: "Vendor identity and status are valid",
+            code: screeningBypassed ? "VENDOR_SCREENING_BYPASSED" : "VENDOR_VALID",
+            message: screeningBypassed
+              ? "Vendor identity is valid; screening was explicitly bypassed"
+              : "Vendor identity, status, and screening are valid",
             evidence: { vendorId: vendor.id },
           },
         ],
